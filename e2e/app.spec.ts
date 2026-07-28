@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Page } from '@playwright/test'
 
-const appPath = '/ai-math-training/'
+const appPath = '/mental-math-sprint/'
 
 test.beforeEach(async ({ page }) => {
   await page.goto(appPath)
@@ -18,7 +18,7 @@ test.beforeEach(async ({ page }) => {
 })
 
 test('completes an addition session entirely from the keyboard', async ({ page }) => {
-  const setupHeading = page.getByRole('heading', { name: 'Sharpen your number sense.' })
+  const setupHeading = page.getByRole('heading', { name: 'Train fast. Think clearly. Beat your best.' })
   await expect(setupHeading).toBeVisible()
   await expect(setupHeading).not.toBeFocused()
   await expect(page.getByRole('link', { name: 'Skip to main content' })).toHaveAttribute('href', '#main-content')
@@ -27,7 +27,7 @@ test('completes an addition session entirely from the keyboard', async ({ page }
   await expect(supportLink).toHaveAttribute('href', 'https://buy.stripe.com/8x200i8bSgVe3Vl3g8bfO00')
   await expect(supportLink).toHaveAttribute('rel', /noopener noreferrer/)
   await setQuestionCount(page, 1)
-  await page.getByRole('button', { name: /Start practice/ }).click()
+  await page.getByRole('button', { name: /Start sprint/ }).click()
 
   const input = page.getByLabel('Your answer')
   await expect(input).toBeFocused()
@@ -50,7 +50,7 @@ test('completes an addition session entirely from the keyboard', async ({ page }
 
 test('restores a draft, counts retries, reveals, and resumes after save and exit', async ({ page }) => {
   await setQuestionCount(page, 2)
-  await page.getByRole('button', { name: /Start practice/ }).click()
+  await page.getByRole('button', { name: /Start sprint/ }).click()
 
   const input = page.getByLabel('Your answer')
   await input.fill('0')
@@ -95,7 +95,7 @@ test('builds mixed questions and supports the on-screen keypad', async ({ page }
   await setQuestionCount(page, 1)
 
   await expect(page.locator('.example-card')).toContainText('2–3 digits')
-  await page.getByRole('button', { name: /Start practice/ }).click()
+  await page.getByRole('button', { name: /Start sprint/ }).click()
 
   const operators = await page.locator('.expression__operator').allInnerTexts()
   expect(new Set(operators).size).toBeGreaterThanOrEqual(2)
@@ -113,7 +113,7 @@ test('builds mixed questions and supports the on-screen keypad', async ({ page }
 test('persists vertical practice and scores a skipped question', async ({ page }) => {
   await page.getByLabel('Vertical').check()
   await setQuestionCount(page, 1)
-  await page.getByRole('button', { name: /Start practice/ }).click()
+  await page.getByRole('button', { name: /Start sprint/ }).click()
 
   await expect(page.locator('.expression--vertical')).toBeVisible()
   await expect(page.getByText(/0% complete/)).toBeVisible()
@@ -154,7 +154,7 @@ test('has no detectable WCAG A or AA violations in core views', async ({ page })
   await expectAccessible(page, 'setup')
 
   await setQuestionCount(page, 1)
-  await page.getByRole('button', { name: /Start practice/ }).click()
+  await page.getByRole('button', { name: /Start sprint/ }).click()
   await expectAccessible(page, 'practice')
 
   const revealButton = page.getByRole('button', { name: 'Reveal answer' })
@@ -196,7 +196,7 @@ test('keeps mobile keypad focus and restart control deliberate', async ({ browse
   await mobile.evaluate(() => window.localStorage.clear())
   await mobile.reload()
   await setQuestionCount(mobile, 1)
-  await mobile.getByRole('button', { name: /Start practice/ }).click()
+  await mobile.getByRole('button', { name: /Start sprint/ }).click()
 
   const restart = mobile.getByRole('button', { name: 'Restart session' })
   const restartBox = await restart.boundingBox()
@@ -216,7 +216,7 @@ test('keeps mobile keypad focus and restart control deliberate', async ({ browse
 
 test('reviews corrected questions without expanding a perfect result', async ({ page }) => {
   await setQuestionCount(page, 1)
-  await page.getByRole('button', { name: /Start practice/ }).click()
+  await page.getByRole('button', { name: /Start sprint/ }).click()
   const input = page.getByLabel('Your answer')
   const expression = await page.locator('.expression__pieces').innerText()
   const operands = expression.match(/\d+/g)?.map(Number) ?? []
@@ -236,11 +236,11 @@ test('reviews corrected questions without expanding a perfect result', async ({ 
 test('publishes canonical social metadata and production-base assets', async ({ page }) => {
   await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
     'href',
-    'https://dmoliveira.github.io/ai-math-training/',
+    'https://dmoliveira.github.io/mental-math-sprint/',
   )
   await expect(page.locator('meta[property="og:image"]')).toHaveAttribute(
     'content',
-    'https://dmoliveira.github.io/ai-math-training/social-preview.png',
+    'https://dmoliveira.github.io/mental-math-sprint/social-preview.png',
   )
   await expect(page.locator('meta[name="twitter:card"]')).toHaveAttribute(
     'content',
@@ -248,7 +248,7 @@ test('publishes canonical social metadata and production-base assets', async ({ 
   )
   await expect(page.locator('script[type="module"]')).toHaveAttribute(
     'src',
-    /^\/ai-math-training\/assets\//,
+    /^\/mental-math-sprint\/assets\//,
   )
 
   const socialImage = await page.request.get(`${appPath}social-preview.png`)

@@ -1,7 +1,7 @@
 .PHONY: help install dev lint test test-e2e build check
 
 help: ## Show available commands
-	@awk 'BEGIN {FS = ":.*## "; printf "Math Training commands:\n\n"} /^[[:alnum:]_-]+:.*## / {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*## "; printf "Mental Math Sprint commands:\n\n"} /^[[:alnum:]_-]+:.*## / {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 install: ## Install locked dependencies
 	npm ci

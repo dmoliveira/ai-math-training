@@ -370,7 +370,7 @@ describe('MathTrainingApp lifecycle', () => {
     const payload = share.share.mock.calls[0]![0]
     expect(payload.text).toContain('Mental Math Sprint')
     expect(payload.text).not.toContain('session-')
-    expect(payload.url).toBe('https://dmoliveira.github.io/ai-math-training/')
+    expect(payload.url).toBe('https://dmoliveira.github.io/mental-math-sprint/')
     await vi.waitFor(() => expect(document.querySelector('#app-announcer')?.textContent).toBe('Result shared.'))
 
     root.querySelector<HTMLButtonElement>('[data-action="copy-result"]')!.click()

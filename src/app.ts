@@ -40,7 +40,7 @@ import {
   type StoreLoadResult,
 } from './storage/progress-store'
 
-const PUBLIC_APP_URL = 'https://dmoliveira.github.io/ai-math-training/'
+const PUBLIC_APP_URL = 'https://dmoliveira.github.io/mental-math-sprint/'
 
 type StorePort = Pick<ProgressStore, 'load' | 'save' | 'clear' | 'clearAll'>
 
@@ -443,7 +443,7 @@ export class MathTrainingApp {
       </aside>
       <footer class="site-footer">
         <p><span aria-hidden="true">🔒</span> Settings and completed history stay in this browser. No account or tracking.</p>
-        <a href="https://github.com/dmoliveira/ai-math-training" target="_blank" rel="noopener noreferrer">View source <span class="sr-only">(opens in a new tab)</span></a>
+        <a href="https://github.com/dmoliveira/mental-math-sprint" target="_blank" rel="noopener noreferrer">View source <span class="sr-only">(opens in a new tab)</span></a>
       </footer>
     `
   }
@@ -464,11 +464,11 @@ export class MathTrainingApp {
     return `
       <header class="site-header">
         <div class="site-header__inner">
-          <button class="brand" type="button" data-action="home" aria-label="Math Training home">
+          <button class="brand" type="button" data-action="home" aria-label="Mental Math Sprint home">
             <span class="brand__mark" aria-hidden="true">
               <span>+</span><span>×</span>
             </span>
-            <span class="brand__name">Math Training</span>
+            <span class="brand__name">Mental Math Sprint</span>
           </button>
           <nav class="creator-nav" aria-label="Creator links">
             <a href="https://dmoliveira.github.io/my-cv-public/cv/human/" target="_blank" rel="noopener noreferrer">CV<span class="sr-only"> (opens in a new tab)</span></a>
@@ -491,14 +491,14 @@ export class MathTrainingApp {
     return `
       <main id="main-content" class="page-shell setup-page">
         <section class="setup-hero" aria-labelledby="setup-heading">
-          <div class="eyebrow"><span aria-hidden="true">✦</span> Focused arithmetic practice</div>
-          <h1 id="setup-heading" tabindex="-1">Sharpen your number sense.</h1>
-          <p class="lede">Build a session that meets you where you are, then strengthen speed and confidence one answer at a time.</p>
-          <img class="hero-art" src="${import.meta.env.BASE_URL}math-training-banner.svg" alt="" width="1600" height="560" />
+          <div class="eyebrow"><span aria-hidden="true">✦</span> Your next personal best starts here</div>
+          <h1 id="setup-heading" tabindex="-1">Train fast. Think clearly. Beat your best.</h1>
+          <p class="lede">Configure your sprint, race the clock, and build speed one focused answer at a time.</p>
+          <img class="hero-art" src="${import.meta.env.BASE_URL}mental-math-sprint-banner.svg" alt="" width="1600" height="560" />
           <ul class="benefit-list" aria-label="Practice benefits">
-            <li><span aria-hidden="true">✓</span> Your level, your pace</li>
-            <li><span aria-hidden="true">✓</span> Instant, calm feedback</li>
-            <li><span aria-hidden="true">✓</span> Progress saved locally</li>
+            <li><span aria-hidden="true">✓</span> Your rules, your pace</li>
+            <li><span aria-hidden="true">✓</span> Fast, clear feedback</li>
+            <li><span aria-hidden="true">✓</span> Personal bests saved privately</li>
           </ul>
         </section>
 
@@ -614,7 +614,7 @@ export class MathTrainingApp {
             ${errors.length > 0 ? this.renderConfigErrors(errors) : ''}
 
             <button class="button button--primary button--large" type="submit" ${disabled(errors.length > 0)}>
-              Start practice <span aria-hidden="true">→</span>
+              Start sprint <span aria-hidden="true">→</span>
             </button>
             <p class="keyboard-note"><span aria-hidden="true">⌨</span> Built for keyboard and number-pad practice.</p>
           </form>
@@ -900,7 +900,7 @@ export class MathTrainingApp {
           ${this.renderShareCard(session)}
 
           <div class="completion-actions">
-            <button class="button button--primary button--large" type="button" data-action="practice-again">Practice again <span aria-hidden="true">↻</span></button>
+            <button class="button button--primary button--large" type="button" data-action="practice-again">Sprint again <span aria-hidden="true">↻</span></button>
             <button class="button button--secondary button--large" type="button" data-action="change-settings">Change settings</button>
           </div>
           <p class="completion-note"><span aria-hidden="true">🌱</span> A little consistent practice makes big numbers feel smaller.</p>
