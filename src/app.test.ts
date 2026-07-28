@@ -194,6 +194,127 @@ describe('MathTrainingApp lifecycle', () => {
     expect(store.save).toHaveBeenCalledTimes(saveCount)
   })
 
+  it('renders vertical practice, skips with a scored penalty, and plays unlocked cues', async () => {
+    let now = 1_000
+    const audio = {
+      unlockFromUserGesture: vi.fn(async () => true),
+      play: vi.fn(),
+      suspend: vi.fn(),
+    }
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, {
+      store: createStore({ status: 'empty', state: null }),
+      now: () => now,
+      createSeed: () => 7,
+      audio,
+    })
+    app.start()
+
+    root.querySelector<HTMLInputElement>('#layout-vertical')!.click()
+    root.querySelector<HTMLInputElement>('#audio-enabled')!.click()
+    const problemCount = root.querySelector<HTMLInputElement>('#problem-count')!
+    problemCount.value = '1'
+    problemCount.dispatchEvent(new Event('input', { bubbles: true }))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(audio.unlockFromUserGesture).toHaveBeenCalledOnce()
+
+    root.querySelector<HTMLFormElement>('#setup-form')!.dispatchEvent(
+      new SubmitEvent('submit', { bubbles: true, cancelable: true }),
+    )
+    expect(root.querySelector('.expression--vertical')).not.toBeNull()
+    expect(root.textContent).toContain('0% complete')
+
+    now = 4_000
+    root.querySelector<HTMLButtonElement>('[data-action="skip"]')!.click()
+    expect(root.textContent).toContain('20 seconds added to your scored time')
+    expect(root.textContent).toContain('100% complete')
+    expect(root.querySelector('#question-time')?.textContent).toBe('00:03')
+    expect(audio.play).toHaveBeenCalledWith('skip')
+
+    root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(
+      new SubmitEvent('submit', { bubbles: true, cancelable: true }),
+    )
+    expect(root.textContent).toContain('Session complete.')
+    expect(root.textContent).not.toContain('Perfect run!')
+    expect(root.textContent).toContain('Scored time')
+    expect(root.textContent).toContain('00:23')
+    expect(root.textContent).toContain('Skipped (+20s)')
+    expect(audio.play).toHaveBeenCalledWith('complete')
+
+    app.destroy()
+    expect(audio.suspend).toHaveBeenCalled()
+  })
+
+  it('unlocks a restored sound preference before playing its first action cue', async () => {
+    const state = createPracticeState()
+    state.preferences.audioEnabled = true
+    const audio = {
+      unlockFromUserGesture: vi.fn(async () => true),
+      play: vi.fn(),
+      suspend: vi.fn(),
+    }
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, {
+      store: createStore({ status: 'ok', state }),
+      now: () => 2_000,
+      audio,
+    })
+    app.start()
+    root.querySelector<HTMLButtonElement>('[data-action="skip"]')!.click()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(audio.unlockFromUserGesture).toHaveBeenCalled()
+    expect(audio.play).toHaveBeenCalledWith('skip')
+    app.destroy()
+  })
+
+  it('invalidates a pending audio cue when practice is suspended', async () => {
+    const state = createPracticeState()
+    state.preferences.audioEnabled = true
+    let resolveUnlock: (value: boolean) => void = () => undefined
+    const pendingUnlock = new Promise<boolean>((resolve) => { resolveUnlock = resolve })
+    const audio = {
+      unlockFromUserGesture: vi.fn(() => pendingUnlock),
+      play: vi.fn(),
+      suspend: vi.fn(),
+    }
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, {
+      store: createStore({ status: 'ok', state }),
+      now: () => 2_000,
+      audio,
+    })
+    app.start()
+    root.querySelector<HTMLButtonElement>('[data-action="skip"]')!.click()
+    setVisibility('hidden')
+    document.dispatchEvent(new Event('visibilitychange'))
+    resolveUnlock(true)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(audio.play).not.toHaveBeenCalled()
+    expect(audio.suspend).toHaveBeenCalled()
+    app.destroy()
+  })
+
+  it('falls back to horizontal rendering for chained questions', () => {
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, {
+      store: createStore({ status: 'empty', state: null }),
+      now: () => 1_000,
+      createSeed: () => 7,
+    })
+    app.start()
+    root.querySelector<HTMLInputElement>('#layout-vertical')!.click()
+    root.querySelector<HTMLInputElement>('#operator-count-2')!.click()
+    root.querySelector<HTMLFormElement>('#setup-form')!.dispatchEvent(
+      new SubmitEvent('submit', { bubbles: true, cancelable: true }),
+    )
+    expect(root.querySelector('.expression--vertical')).toBeNull()
+    expect(root.querySelector('.expression__pieces')).not.toBeNull()
+    app.destroy()
+  })
+
   it('distinguishes unavailable storage from invalid saved progress', () => {
     const root = document.querySelector<HTMLElement>('#app')!
     const unavailableStore = createStore({ status: 'unavailable', state: null })

@@ -98,6 +98,27 @@ test('builds mixed questions and supports the on-screen keypad', async ({ page }
   await expect(page.getByLabel('Your answer')).toHaveValue('')
 })
 
+test('persists vertical practice and scores a skipped question', async ({ page }) => {
+  await page.getByLabel('Vertical').check()
+  await setQuestionCount(page, 1)
+  await page.getByRole('button', { name: /Start practice/ }).click()
+
+  await expect(page.locator('.expression--vertical')).toBeVisible()
+  await expect(page.getByText(/0% complete/)).toBeVisible()
+  await expect(page.getByText('This question', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Skip question (+20s)' }).click()
+
+  await expect(page.locator('#answer-feedback')).toContainText('20 seconds added')
+  await expect(page.getByText(/100% complete/)).toBeVisible()
+  await expect(page.locator('#app-announcer')).toContainText('Question skipped. 20 seconds added.')
+  await expectAccessible(page, 'skipped question')
+
+  await page.getByRole('button', { name: 'See results' }).click()
+  await expect(page.getByRole('heading', { name: 'Session complete.' })).toBeVisible()
+  await expect(page.locator('.result-card').filter({ hasText: 'Scored time' })).toContainText('00:20')
+  await expect(page.getByText('Skipped (+20s)')).toBeVisible()
+})
+
 test('has no detectable WCAG A or AA violations in core views', async ({ page }) => {
   await expectAccessible(page, 'setup')
 

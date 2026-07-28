@@ -18,15 +18,18 @@ import {
   createTrainingSession,
   deleteCurrentDigit,
   formatDuration,
+  getCurrentProblemElapsedMs,
   getElapsedMs,
   pauseSession,
   resumeSession,
   revealCurrentAnswer,
   setCurrentDraft,
+  skipCurrentProblem,
   summarizeSession,
   type TrainingSession,
 } from './state/session'
-import { DEFAULT_PREFERENCES } from './sprint/contracts'
+import { DEFAULT_PREFERENCES, effectiveOrientation, type AudioCue, type AudioPort } from './sprint/contracts'
+import { SynthAudio } from './sprint/audio'
 import {
   APP_SCHEMA_VERSION,
   ProgressStore,
@@ -40,6 +43,7 @@ export interface AppDependencies {
   store?: StorePort
   now?: () => number
   createSeed?: () => number
+  audio?: AudioPort
 }
 
 interface Notice {
@@ -52,6 +56,11 @@ export class MathTrainingApp {
   private readonly store: StorePort
   private readonly now: () => number
   private readonly createSeed: () => number
+  private readonly audio: AudioPort
+  private audioUnlocked = false
+  private audioUnlockPromise: Promise<boolean> | null = null
+  private pendingAudioCue: AudioCue | null = null
+  private audioCycle = 0
   private readonly announcer: HTMLParagraphElement
   private state: PersistedAppState
   private notice: Notice | null = null
@@ -66,6 +75,7 @@ export class MathTrainingApp {
     this.store = dependencies.store ?? new ProgressStore()
     this.now = dependencies.now ?? Date.now
     this.createSeed = dependencies.createSeed ?? createRandomSeed
+    this.audio = dependencies.audio ?? new SynthAudio()
     this.announcer = document.createElement('p')
     this.announcer.id = 'app-announcer'
     this.announcer.className = 'sr-only app-announcer'
@@ -109,6 +119,7 @@ export class MathTrainingApp {
     this.announcementTimerId = null
     this.announcer.textContent = ''
     this.announcer.remove()
+    this.suspendAudio()
     this.started = false
   }
 
@@ -145,6 +156,9 @@ export class MathTrainingApp {
       case 'confirm-restart':
         this.restartSession()
         break
+      case 'skip':
+        this.skipQuestion()
+        break
       case 'open-reveal':
         this.openDialog('reveal-dialog')
         break
@@ -172,6 +186,26 @@ export class MathTrainingApp {
     const target = event.target
     if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return
     if (!target.closest('#setup-form')) return
+
+    if (target.name === 'orientation' || target.name === 'audioEnabled') {
+      const preferences = { ...this.state.preferences }
+      if (target.name === 'orientation') {
+        preferences.orientation = target.value === 'vertical' ? 'vertical' : 'horizontal'
+        this.announce(`${preferences.orientation === 'vertical' ? 'Vertical' : 'Horizontal'} layout selected.`)
+      } else if (target instanceof HTMLInputElement) {
+        preferences.audioEnabled = target.checked
+        if (target.checked) void this.enableAudio()
+        else {
+          this.suspendAudio()
+          this.announce('Sound cues off.')
+        }
+      }
+      this.state = { ...this.state, preferences }
+      this.persist(true)
+      this.render()
+      window.requestAnimationFrame(() => document.getElementById(target.id)?.focus())
+      return
+    }
 
     const next = cloneConfig(this.state.settings)
     const focusId = target.id
@@ -228,6 +262,9 @@ export class MathTrainingApp {
       const session = this.state.session
       if (!session) return
       const updated = setCurrentDraft(session, target.value)
+      if (updated !== session) {
+        this.playCue(updated.progress[updated.currentIndex]!.draft.length < session.progress[session.currentIndex]!.draft.length ? 'erase' : 'type')
+      }
       this.state = { ...this.state, session: updated }
       this.syncAnswerControls()
       this.persist()
@@ -273,12 +310,12 @@ export class MathTrainingApp {
 
     if (event.key === 'Escape' || event.key === '*') {
       event.preventDefault()
-      this.updateSession(clearCurrentDraft)
+      if (this.updateSession(clearCurrentDraft)) this.playCue('erase')
       this.syncAnswerControls()
       this.persist()
     } else if (event.key === '-') {
       event.preventDefault()
-      this.updateSession(deleteCurrentDigit)
+      if (this.updateSession(deleteCurrentDigit)) this.playCue('erase')
       this.syncAnswerControls()
       this.persist()
     }
@@ -289,6 +326,7 @@ export class MathTrainingApp {
     if (!session || this.state.view !== 'practice' || session.completedAt !== null) return
 
     if (document.visibilityState === 'hidden') {
+      this.suspendAudio()
       this.state = { ...this.state, session: pauseSession(session, this.now()) }
       this.persist(true)
     } else {
@@ -499,6 +537,25 @@ export class MathTrainingApp {
               <p class="selection-note">Choose any amount from 1 to 50.</p>
             </fieldset>
 
+            <fieldset class="setting-group">
+              <legend>Practice options</legend>
+              <p class="field-hint">Choose how questions look and whether optional feedback sounds play.</p>
+              <div class="practice-options">
+                <div>
+                  <span class="number-field__label">Problem layout</span>
+                  <div class="segmented-control">
+                    <label><input id="layout-horizontal" type="radio" name="orientation" value="horizontal" ${checked(this.state.preferences.orientation === 'horizontal')} /><span>Horizontal</span></label>
+                    <label><input id="layout-vertical" type="radio" name="orientation" value="vertical" ${checked(this.state.preferences.orientation === 'vertical')} /><span>Vertical</span></label>
+                  </div>
+                  <p class="selection-note">Vertical stacks one-operation questions. Chained questions stay horizontal.</p>
+                </div>
+                <label class="sound-option" for="audio-enabled">
+                  <input id="audio-enabled" type="checkbox" name="audioEnabled" ${checked(this.state.preferences.audioEnabled)} />
+                  <span><strong>Play sound cues</strong><small>Optional feedback sounds; every result also appears on screen.</small></span>
+                </label>
+              </div>
+            </fieldset>
+
             ${example}
             ${errors.length > 0 ? this.renderConfigErrors(errors) : ''}
 
@@ -623,19 +680,22 @@ export class MathTrainingApp {
 
     const locked = progress.status !== 'pending'
     const isLast = session.currentIndex === session.problems.length - 1
-    const progressValue = locked ? session.currentIndex + 1 : session.currentIndex
+    const progressValue = session.progress.filter((item) => item.status !== 'pending').length
+    const percent = Math.round((progressValue / session.problems.length) * 100)
+    const questionElapsed = getCurrentProblemElapsedMs(session, this.now())
 
     return `
       <main id="main-content" class="page-shell practice-page">
         <section class="session-toolbar" aria-label="Session progress">
           <div class="progress-copy">
-            <span>Question <strong>${session.currentIndex + 1}</strong> of ${session.problems.length}</span>
-            <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="${session.problems.length}" aria-valuenow="${progressValue}" aria-label="${progressValue} of ${session.problems.length} questions completed">
+            <span>Question <strong>${session.currentIndex + 1}</strong> of ${session.problems.length} · ${percent}% complete</span>
+            <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="${session.problems.length}" aria-valuenow="${progressValue}" aria-label="Session completion" aria-valuetext="${progressValue} of ${session.problems.length} questions complete, ${percent} percent">
               <span style="width: ${(progressValue / session.problems.length) * 100}%"></span>
             </div>
           </div>
           <dl class="session-metrics">
-            <div><dt>Time</dt><dd id="elapsed-time">${formatDuration(getElapsedMs(session, this.now()))}</dd></div>
+            <div><dt>Session time</dt><dd id="elapsed-time">${formatDuration(getElapsedMs(session, this.now()))}</dd></div>
+            <div><dt>This question</dt><dd id="question-time">${questionElapsed === null ? '—' : formatDuration(questionElapsed)}</dd></div>
             <div><dt>Mistakes</dt><dd>${session.mistakes}</dd></div>
           </dl>
         </section>
@@ -646,12 +706,14 @@ export class MathTrainingApp {
               const stateLabel =
                 item.status === 'correct'
                   ? 'correct'
-                  : item.status === 'revealed'
+                  : item.status === 'skipped'
+                    ? 'skipped, 20-second penalty'
+                    : item.status === 'revealed'
                     ? 'revealed'
                     : index === session.currentIndex
                       ? 'current'
                       : 'not answered'
-              return `<li class="question-dot question-dot--${item.status} ${index === session.currentIndex ? 'question-dot--current' : ''}" aria-label="Question ${index + 1}: ${stateLabel}"><span>${item.status === 'correct' ? '✓' : item.status === 'revealed' ? '•' : index + 1}</span></li>`
+              return `<li class="question-dot question-dot--${item.status} ${index === session.currentIndex ? 'question-dot--current' : ''}" aria-label="Question ${index + 1}: ${stateLabel}"><span>${item.status === 'correct' ? '✓' : item.status === 'skipped' ? '—' : item.status === 'revealed' ? '•' : index + 1}</span></li>`
             })
             .join('')}
         </ol>
@@ -660,7 +722,7 @@ export class MathTrainingApp {
           <div class="problem-panel">
             <p class="step-label">Question ${session.currentIndex + 1}</p>
             <h1 id="problem-heading" class="problem-heading" tabindex="-1">Solve the expression</h1>
-            ${renderExpression(problem)}
+            ${renderExpression(problem, this.state.preferences.orientation)}
 
             <form id="answer-form" class="answer-form" novalidate>
               <label for="answer-input">Your answer</label>
@@ -695,7 +757,7 @@ export class MathTrainingApp {
                 ${
                   locked
                     ? ''
-                    : '<button class="button button--quiet" type="button" data-action="open-reveal">Reveal answer</button>'
+                    : '<div class="secondary-actions"><button class="button button--quiet" type="button" data-action="open-reveal">Reveal answer</button><button class="button button--quiet" type="button" data-action="skip">Skip question (+20s)</button></div>'
                 }
               </div>
             </form>
@@ -739,7 +801,7 @@ export class MathTrainingApp {
 
   private renderCompletion(session: TrainingSession): string {
     const summary = summarizeSession(session, this.now())
-    const perfect = summary.mistakes === 0 && summary.revealed === 0
+    const perfect = summary.mistakes === 0 && summary.revealed === 0 && summary.skipped === 0
     const review = this.renderCompletionReview(session)
 
     return `
@@ -764,8 +826,8 @@ export class MathTrainingApp {
               <dd>${summary.mistakes}<small>${summary.revealed} ${pluralize(summary.revealed, 'answer')} revealed</small></dd>
             </div>
             <div class="result-card">
-              <dt>Active time</dt>
-              <dd>${formatDuration(summary.elapsedMs)}<small>Paused when you stepped away</small></dd>
+              <dt>Scored time</dt>
+              <dd>${formatDuration(summary.scoredElapsedMs)}<small>${formatDuration(summary.elapsedMs)} active + ${formatDuration(summary.penaltyMs)} penalties</small></dd>
             </div>
           </dl>
 
@@ -784,8 +846,16 @@ export class MathTrainingApp {
   private renderCompletionReview(session: TrainingSession): string {
     const reviewItems = session.progress.flatMap((progress, index) => {
       const problem = session.problems[index]
-      if (!problem || (progress.status !== 'revealed' && progress.attempts <= 1)) return []
-      const outcome = progress.status === 'revealed' ? 'Revealed' : `${progress.attempts} attempts`
+      if (
+        !problem ||
+        (progress.status !== 'revealed' && progress.status !== 'skipped' && progress.attempts <= 1)
+      ) return []
+      const outcome =
+        progress.status === 'revealed'
+          ? 'Revealed'
+          : progress.status === 'skipped'
+            ? 'Skipped (+20s)'
+            : `${progress.attempts} attempts`
       return [{ problem, outcome }]
     })
 
@@ -867,6 +937,7 @@ export class MathTrainingApp {
   }
 
   private saveAndExit(): void {
+    this.suspendAudio()
     if (!this.state.session) return
     this.state = {
       ...this.state,
@@ -886,6 +957,7 @@ export class MathTrainingApp {
   }
 
   private discardSession(): void {
+    this.suspendAudio()
     this.state = { ...this.state, view: 'setup', session: null }
     this.notice = { message: 'Saved session discarded. Your settings are still here.', tone: 'info' }
     this.persist(true)
@@ -894,6 +966,7 @@ export class MathTrainingApp {
   }
 
   private changeSettings(): void {
+    this.suspendAudio()
     this.state = { ...this.state, view: 'setup', session: null }
     this.notice = null
     this.persist(true)
@@ -920,7 +993,9 @@ export class MathTrainingApp {
     if (current.status === 'pending') {
       const checkedSession = checkCurrentAnswer(session, this.now())
       if (checkedSession === session) return
+      this.playCue('submit')
       this.state = { ...this.state, session: checkedSession }
+      this.playCue(checkedSession.progress[checkedSession.currentIndex]?.status === 'pending' ? 'incorrect' : 'correct')
       this.persist(true)
       this.render()
       const checkedProgress = checkedSession.progress[checkedSession.currentIndex]
@@ -936,6 +1011,7 @@ export class MathTrainingApp {
     }
 
     const advanced = advanceSession(session, this.now())
+    if (advanced.completedAt !== null && session.completedAt === null) this.playCue('complete')
     this.state = {
       ...this.state,
       view: advanced.completedAt === null ? 'practice' : 'complete',
@@ -949,6 +1025,8 @@ export class MathTrainingApp {
   private confirmReveal(): void {
     if (!this.state.session) return
     const revealedSession = revealCurrentAnswer(this.state.session, this.now())
+    if (revealedSession === this.state.session) return
+    this.playCue('reveal')
     this.state = { ...this.state, session: revealedSession }
     this.persist(true)
     this.render()
@@ -957,14 +1035,79 @@ export class MathTrainingApp {
     document.getElementById('primary-action')?.focus()
   }
 
+  private skipQuestion(): void {
+    const session = this.state.session
+    if (!session) return
+    const skipped = skipCurrentProblem(session, this.now())
+    if (skipped === session) return
+    this.state = { ...this.state, session: skipped }
+    this.playCue('skip')
+    this.persist(true)
+    this.render()
+    const isLast = skipped.currentIndex === skipped.problems.length - 1
+    this.announce(`Question skipped. 20 seconds added. ${isLast ? 'See your results.' : 'Next question.'}`)
+    document.getElementById('primary-action')?.focus()
+  }
+
+  private async enableAudio(): Promise<void> {
+    const cycle = this.audioCycle
+    const unlocked = await this.startAudioUnlock()
+    if (cycle !== this.audioCycle || !this.state.preferences.audioEnabled) return
+    if (unlocked) {
+      this.announce('Sound cues on.')
+      return
+    }
+    this.state = { ...this.state, preferences: { ...this.state.preferences, audioEnabled: false } }
+    this.notice = { message: 'Sound cues could not be enabled on this device.', tone: 'warning' }
+    this.persist(true)
+    this.render()
+    this.announce(this.notice.message)
+  }
+
+  private startAudioUnlock(): Promise<boolean> {
+    if (this.audioUnlocked) return Promise.resolve(true)
+    if (this.audioUnlockPromise) return this.audioUnlockPromise
+
+    const cycle = this.audioCycle
+    const pending = this.audio.unlockFromUserGesture().catch(() => false)
+    this.audioUnlockPromise = pending
+    void pending.then((unlocked) => {
+      if (cycle !== this.audioCycle || this.audioUnlockPromise !== pending) return
+      this.audioUnlockPromise = null
+      this.audioUnlocked = unlocked
+      const cue = this.pendingAudioCue
+      this.pendingAudioCue = null
+      if (unlocked && cue && this.state.preferences.audioEnabled) this.audio.play(cue)
+    })
+    return pending
+  }
+
+  private playCue(cue: AudioCue): void {
+    if (!this.state.preferences.audioEnabled) return
+    if (this.audioUnlocked) {
+      this.audio.play(cue)
+      return
+    }
+    this.pendingAudioCue = cue
+    void this.startAudioUnlock()
+  }
+
+  private suspendAudio(): void {
+    this.audioCycle += 1
+    this.audioUnlocked = false
+    this.audioUnlockPromise = null
+    this.pendingAudioCue = null
+    this.audio.suspend()
+  }
+
   private useKeypad(key: string, trigger: HTMLElement): void {
     if (!this.state.session) return
     if (/^\d$/.test(key)) {
-      this.updateSession((session) => appendCurrentDigit(session, key))
+      if (this.updateSession((session) => appendCurrentDigit(session, key))) this.playCue('type')
     } else if (key === 'delete') {
-      this.updateSession(deleteCurrentDigit)
+      if (this.updateSession(deleteCurrentDigit)) this.playCue('erase')
     } else if (key === 'clear') {
-      this.updateSession(clearCurrentDraft)
+      if (this.updateSession(clearCurrentDraft)) this.playCue('erase')
     }
     this.syncAnswerControls()
     this.persist()
@@ -987,9 +1130,12 @@ export class MathTrainingApp {
     void trigger
   }
 
-  private updateSession(update: (session: TrainingSession) => TrainingSession): void {
-    if (!this.state.session) return
-    this.state = { ...this.state, session: update(this.state.session) }
+  private updateSession(update: (session: TrainingSession) => TrainingSession): boolean {
+    if (!this.state.session) return false
+    const updated = update(this.state.session)
+    if (updated === this.state.session) return false
+    this.state = { ...this.state, session: updated }
+    return true
   }
 
   private syncAnswerControls(): void {
@@ -1025,6 +1171,11 @@ export class MathTrainingApp {
   private updateTimerText(): void {
     const timer = this.root.querySelector<HTMLElement>('#elapsed-time')
     if (timer && this.state.session) timer.textContent = formatDuration(getElapsedMs(this.state.session, this.now()))
+    const questionTimer = this.root.querySelector<HTMLElement>('#question-time')
+    if (questionTimer && this.state.session) {
+      const elapsed = getCurrentProblemElapsedMs(this.state.session, this.now())
+      questionTimer.textContent = elapsed === null ? '—' : formatDuration(elapsed)
+    }
   }
 
   private persist(force = false): boolean {
@@ -1109,7 +1260,23 @@ function cloneConfig(config: TrainingConfig): TrainingConfig {
   return { ...config, operations: [...config.operations] }
 }
 
-function renderExpression(problem: TrainingSession['problems'][number]): string {
+function renderExpression(
+  problem: TrainingSession['problems'][number],
+  preference: 'horizontal' | 'vertical',
+): string {
+  if (effectiveOrientation(preference, problem) === 'vertical') {
+    const operation = problem.operators[0]!
+    return `
+      <div class="expression expression--vertical" role="img" aria-label="${escapeHtml(speakExpression(problem))}">
+        <span class="vertical-expression" aria-hidden="true">
+          <span>${escapeHtml(problem.operands[0] ?? '')}</span>
+          <span><b>${OPERATION_DETAILS[operation].symbol}</b>${escapeHtml(problem.operands[1] ?? '')}</span>
+          <i></i>
+        </span>
+        <span class="expression__equals" aria-hidden="true">?</span>
+      </div>
+    `
+  }
   const pieces = problem.operands
     .map((operand, index) => {
       const operation = problem.operators[index]
@@ -1135,6 +1302,9 @@ function feedbackMarkup(feedback: string, answer: string): string {
   }
   if (feedback === 'correct') {
     return '<span class="feedback-icon" aria-hidden="true">✓</span><span><strong>Correct.</strong> Nice work — keep going.</span>'
+  }
+  if (feedback === 'skipped') {
+    return '<span class="feedback-icon" aria-hidden="true">—</span><span><strong>Skipped.</strong> 20 seconds added to your scored time.</span>'
   }
   if (feedback === 'revealed') {
     return `<span class="feedback-icon" aria-hidden="true">i</span><span><strong>Answer revealed:</strong> ${escapeHtml(answer)}</span>`

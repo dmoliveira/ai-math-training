@@ -217,6 +217,15 @@ export function getElapsedMs(session: TrainingSession, now: number): number {
   return addDuration(session.elapsedMs, durationSince(session.timerStartedAt, now))
 }
 
+export function getCurrentProblemElapsedMs(session: TrainingSession, now: number): number | null {
+  const current = session.progress[session.currentIndex]
+  if (!current || current.activeElapsedMs === null) return null
+  if (current.status !== 'pending' || session.currentProblemStartedAt === null) {
+    return current.activeElapsedMs
+  }
+  return addDuration(current.activeElapsedMs, durationSince(session.currentProblemStartedAt, now))
+}
+
 export function getPenaltyMs(session: TrainingSession): number {
   const skipped = session.progress.filter((item) => item.status === 'skipped').length
   return Math.min(Number.MAX_SAFE_INTEGER, skipped * SKIP_PENALTY_MS)

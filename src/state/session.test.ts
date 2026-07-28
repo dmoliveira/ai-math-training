@@ -9,6 +9,7 @@ import {
   createTrainingSession,
   deleteCurrentDigit,
   formatDuration,
+  getCurrentProblemElapsedMs,
   getElapsedMs,
   getPenaltyMs,
   getScoredElapsedMs,
@@ -76,6 +77,7 @@ describe('training session', () => {
   it('tracks session and current-problem active time across pause and resume', () => {
     let session = createTrainingSession(oneQuestion, 9, 1_000)
     expect(getElapsedMs(session, 4_000)).toBe(3_000)
+    expect(getCurrentProblemElapsedMs(session, 4_000)).toBe(3_000)
 
     session = pauseSession(session, 4_000)
     expect(getElapsedMs(session, 10_000)).toBe(3_000)
@@ -86,6 +88,7 @@ describe('training session', () => {
     expect(getElapsedMs(session, 22_500)).toBe(5_500)
     session = pauseSession(session, 22_500)
     expect(session.progress[0]?.activeElapsedMs).toBe(5_500)
+    expect(getCurrentProblemElapsedMs(session, 99_000)).toBe(5_500)
   })
 
   it('adds exactly twenty seconds per skip without changing active time', () => {

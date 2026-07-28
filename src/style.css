@@ -2117,3 +2117,107 @@
     }
   }
 }
+
+/* Mental Math Sprint practice controls */
+.practice-options {
+  display: grid;
+  gap: 18px;
+}
+
+.sound-option {
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  cursor: pointer;
+}
+
+.sound-option input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--primary);
+}
+
+.sound-option span,
+.sound-option small {
+  display: block;
+}
+
+.sound-option small {
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.question-dot--skipped span {
+  border: 2px dashed #8a6421;
+  background: var(--gold-soft);
+  color: #704a0b;
+}
+
+.expression--vertical {
+  justify-items: center;
+  gap: 12px;
+}
+
+.vertical-expression {
+  display: inline-grid;
+  min-width: min(100%, 5.5ch);
+  justify-items: stretch;
+  color: var(--ink);
+  font-size: clamp(2.1rem, 6vw, 4.3rem);
+  font-weight: 820;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.08;
+  text-align: right;
+}
+
+.vertical-expression > span {
+  display: grid;
+  grid-template-columns: 1ch 1fr;
+  gap: 0.25ch;
+}
+
+.vertical-expression > span:first-child {
+  grid-template-columns: 1fr;
+}
+
+.vertical-expression b {
+  color: var(--primary);
+  font-weight: 760;
+}
+
+.vertical-expression i {
+  width: 100%;
+  margin-top: 5px;
+  border-top: 4px solid currentcolor;
+}
+
+.secondary-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.answer-feedback--skipped {
+  color: #704a0b;
+}
+
+@media (max-width: 600px) {
+  .secondary-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .session-metrics {
+    flex-wrap: wrap;
+  }
+}
+
+@media (forced-colors: active) {
+  .question-dot--skipped span,
+  .vertical-expression i {
+    border-color: CanvasText;
+  }
+}
