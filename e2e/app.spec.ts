@@ -121,12 +121,14 @@ test('persists vertical practice and scores a skipped question', async ({ page }
   await page.getByRole('button', { name: 'Skip question (+20s)' }).click()
 
   await expect(page.locator('#answer-feedback')).toContainText('20 seconds added')
+  await expect(page.locator('.mascot-coach--skipped')).toBeVisible()
   await expect(page.getByText(/100% complete/)).toBeVisible()
   await expect(page.locator('#app-announcer')).toContainText('Question skipped. 20 seconds added.')
   await expectAccessible(page, 'skipped question')
 
   await page.getByRole('button', { name: 'See results' }).click()
   await expect(page.getByRole('heading', { name: 'Session complete.' })).toBeVisible()
+  await expect(page.locator('.numi--completion')).toBeVisible()
   await expect(page.locator('.result-card').filter({ hasText: 'Scored time' })).toContainText('00:20')
   await expect(page.getByText('Skipped (+20s)')).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Personal top five' })).toBeVisible()
@@ -180,6 +182,7 @@ test('keeps forced-color selection and focus states unambiguous', async ({ page 
   await expect(page.locator('.operation-choice--subtract .operation-choice__check')).toBeHidden()
   await expect(page.locator('#operator-count-1 + span')).toHaveCSS('outline-style', 'solid')
   await expect(page.locator('#mode-same + .mode-card__body')).toHaveCSS('outline-style', 'solid')
+  await expect(page.locator('#theme-forest + span')).toHaveCSS('outline-style', 'solid')
 
   await page.locator('#operation-add').focus()
   await expect(page.locator('.operation-choice--add')).toHaveCSS('outline-style', 'solid')
@@ -233,6 +236,38 @@ test('reviews corrected questions without expanding a perfect result', async ({ 
   await expect(review).toContainText('=')
 })
 
+test('persists themes and compact mode with accessible icon navigation', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 568 })
+  const bio = page.getByRole('link', { name: 'Author Bio (opens in a new tab)' })
+  await expect(bio).toBeVisible()
+  await expect(bio.locator('svg')).toHaveCount(1)
+  await expect(page.locator('.mascot-stage')).toBeVisible()
+
+  await page.getByText('Midnight', { exact: true }).click()
+  await page.locator('#density-compact').check()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'midnight')
+  await expect(page.locator('html')).toHaveAttribute('data-density', 'compact')
+  await expectAccessible(page, 'midnight compact setup')
+  const dimensions = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }))
+  expect(dimensions.scroll).toBeLessThanOrEqual(dimensions.client)
+
+  await page.reload()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'midnight')
+  await expect(page.locator('html')).toHaveAttribute('data-density', 'compact')
+  await setQuestionCount(page, 1)
+  await page.getByRole('button', { name: /Start sprint/ }).click()
+  await expect(page.locator('.mascot-coach')).toBeVisible()
+  await expect(page.locator('.support-card')).toBeHidden()
+  const compactKey = await page.getByRole('button', { name: '1', exact: true }).boundingBox()
+  expect(compactKey?.width).toBeGreaterThanOrEqual(44)
+  expect(compactKey?.height).toBeGreaterThanOrEqual(44)
+  await expectAccessible(page, 'midnight compact practice')
+
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const animation = await page.locator('.numi--coach').evaluate((element) => getComputedStyle(element).animationName)
+  expect(animation).toBe('none')
+})
+
 test('publishes canonical social metadata and production-base assets', async ({ page }) => {
   await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
     'href',
@@ -254,6 +289,11 @@ test('publishes canonical social metadata and production-base assets', async ({ 
   const socialImage = await page.request.get(`${appPath}social-preview.png`)
   expect(socialImage.ok()).toBe(true)
   expect(socialImage.headers()['content-type']).toContain('image/png')
+  for (const asset of ['numi-mascot.svg', 'sprint-orbit.svg']) {
+    const response = await page.request.get(`${appPath}${asset}`)
+    expect(response.ok()).toBe(true)
+    expect(response.headers()['content-type']).toContain('image/svg+xml')
+  }
 })
 
 test('has no page-level overflow at supported responsive widths', async ({ page }) => {
@@ -271,16 +311,19 @@ test('has no page-level overflow at supported responsive widths', async ({ page 
         scrollWidth: document.documentElement.scrollWidth,
         clientWidth: document.documentElement.clientWidth,
         heroWidth: hero?.getBoundingClientRect().width ?? 0,
-        heroHeight: hero?.getBoundingClientRect().height ?? 1,
+        heroHeight: hero?.getBoundingClientRect().height ?? 0,
+        mascotVisible: Boolean(document.querySelector('.mascot-stage')?.getBoundingClientRect().height),
       }
     })
     expect(dimensions.scrollWidth, `${viewport.width}px layout overflowed`).toBeLessThanOrEqual(
       dimensions.clientWidth,
     )
-    expect(dimensions.heroWidth / dimensions.heroHeight, `${viewport.width}px hero ratio`).toBeCloseTo(
-      1600 / 560,
-      1,
-    )
+    if (dimensions.heroHeight > 0) {
+      expect(dimensions.heroWidth / dimensions.heroHeight, `${viewport.width}px hero ratio`).toBeCloseTo(1600 / 560, 1)
+    } else {
+      expect(viewport.width).toBeLessThanOrEqual(430)
+      expect(dimensions.mascotVisible).toBe(true)
+    }
   }
 })
 

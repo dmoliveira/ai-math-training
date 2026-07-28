@@ -145,6 +145,16 @@ describe('progress store', () => {
     expect(new ProgressStore(storage).load()).toEqual({ status: 'invalid', state: null })
   })
 
+  it('upgrades appearance defaults in existing v2 preference records', () => {
+    const storage = new MemoryStorage()
+    const state = createState()
+    const serialized = structuredClone(state) as unknown as { preferences: Record<string, unknown> }
+    delete serialized.preferences.theme
+    delete serialized.preferences.density
+    storage.values.set(V2_STORAGE_KEY, JSON.stringify(serialized))
+    expect(new ProgressStore(storage).load().state?.preferences).toEqual(DEFAULT_PREFERENCES)
+  })
+
   it('reports unavailable or throwing storage without breaking practice', () => {
     const unavailable = new ProgressStore(null)
     expect(unavailable.load()).toEqual({ status: 'unavailable', state: null })

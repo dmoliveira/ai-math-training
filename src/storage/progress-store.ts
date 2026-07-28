@@ -6,7 +6,7 @@ import {
   type Problem,
   type TrainingConfig,
 } from '../math/engine'
-import { DEFAULT_PREFERENCES, isPracticePreferences, type PracticePreferences } from '../sprint/contracts'
+import { DEFAULT_PREFERENCES, parsePracticePreferences, type PracticePreferences } from '../sprint/contracts'
 import {
   SESSION_SCHEMA_VERSION,
   pauseSession,
@@ -158,14 +158,15 @@ export class ProgressStore {
 export function parsePersistedState(value: unknown): PersistedAppState | null {
   if (!isRecord(value) || value.schemaVersion !== APP_SCHEMA_VERSION) return null
   if (!isAppView(value.view) || !isTrainingConfig(value.settings)) return null
-  if (!isPracticePreferences(value.preferences)) return null
+  const preferences = parsePracticePreferences(value.preferences)
+  if (!preferences) return null
   if (value.session !== null && !isTrainingSession(value.session)) return null
 
   return {
     schemaVersion: APP_SCHEMA_VERSION,
     view: value.view,
     settings: cloneConfig(value.settings),
-    preferences: { ...value.preferences },
+    preferences,
     session: value.session ? cloneSessionAsPaused(value.session) : null,
   }
 }
