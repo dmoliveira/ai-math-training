@@ -94,8 +94,12 @@ test('has no detectable WCAG A or AA violations in core views', async ({ page })
   await page.getByRole('button', { name: /Start practice/ }).click()
   await expectAccessible(page, 'practice')
 
-  await page.getByRole('button', { name: 'Reveal answer' }).click()
+  const revealButton = page.getByRole('button', { name: 'Reveal answer' })
+  await revealButton.click()
   await expectAccessible(page, 'reveal dialog')
+  await page.keyboard.press('Escape')
+  await expect(revealButton).toBeFocused()
+  await revealButton.click()
   await page
     .getByRole('dialog', { name: 'Reveal this answer?' })
     .getByRole('button', { name: 'Reveal answer' })

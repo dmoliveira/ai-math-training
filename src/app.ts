@@ -115,7 +115,7 @@ export class MathTrainingApp {
         this.resumeSavedSession()
         break
       case 'open-discard':
-        this.openDialog('discard-dialog', actionElement)
+        this.openDialog('discard-dialog')
         break
       case 'confirm-discard':
         this.discardSession()
@@ -127,13 +127,13 @@ export class MathTrainingApp {
         this.saveAndExit()
         break
       case 'open-restart':
-        this.openDialog('restart-dialog', actionElement)
+        this.openDialog('restart-dialog')
         break
       case 'confirm-restart':
         this.restartSession()
         break
       case 'open-reveal':
-        this.openDialog('reveal-dialog', actionElement)
+        this.openDialog('reveal-dialog')
         break
       case 'confirm-reveal':
         this.confirmReveal()
@@ -238,8 +238,7 @@ export class MathTrainingApp {
       event.preventDefault()
       if (validateConfig(this.state.settings).length > 0) return
       if (this.hasActiveSession()) {
-        const trigger = event.submitter instanceof HTMLElement ? event.submitter : undefined
-        this.openDialog('replace-dialog', trigger)
+        this.openDialog('replace-dialog')
       } else {
         this.startNewSession()
       }
@@ -998,10 +997,9 @@ export class MathTrainingApp {
     })
   }
 
-  private openDialog(id: string, trigger?: HTMLElement): void {
+  private openDialog(id: string): void {
     const dialog = document.getElementById(id)
     if (!(dialog instanceof HTMLDialogElement)) return
-    if (trigger?.id) dialog.dataset.returnFocus = trigger.id
     try {
       dialog.showModal()
     } catch {

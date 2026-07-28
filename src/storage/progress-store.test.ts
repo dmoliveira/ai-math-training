@@ -69,6 +69,44 @@ describe('progress store', () => {
     expect(store.load()).toEqual({ status: 'invalid', state: null })
   })
 
+  it('rejects internally inconsistent progress and completion state', () => {
+    const storage = new MemoryStorage()
+    const store = new ProgressStore(storage)
+
+    const expectRejected = (mutate: (state: PersistedAppState) => void): void => {
+      const state = structuredClone(createState())
+      mutate(state)
+      storage.values.set(STORAGE_KEY, JSON.stringify(state))
+      expect(store.load()).toEqual({ status: 'invalid', state: null })
+    }
+
+    expectRejected((state) => {
+      const progress = state.session?.progress[0]
+      if (!progress) return
+      progress.status = 'correct'
+      progress.feedback = 'correct'
+      progress.attempts = 1
+      progress.draft = '999999'
+    })
+
+    expectRejected((state) => {
+      const progress = state.session?.progress[0]
+      if (!progress) return
+      progress.feedback = 'correct'
+    })
+
+    expectRejected((state) => {
+      if (!state.session) return
+      state.session.completedAt = 2_000
+      state.session.timerStartedAt = null
+    })
+
+    expectRejected((state) => {
+      if (!state.session) return
+      state.session.mistakes = 3
+    })
+  })
+
   it('reports unavailable or throwing storage without breaking practice', () => {
     const unavailable = new ProgressStore(null)
     expect(unavailable.load()).toEqual({ status: 'unavailable', state: null })

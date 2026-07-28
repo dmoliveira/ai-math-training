@@ -118,10 +118,89 @@ function isTrainingSession(value: unknown): value is TrainingSession {
   if (value.timerStartedAt !== null && !isFiniteNumber(value.timerStartedAt)) return false
   if (value.completedAt !== null && !isFiniteNumber(value.completedAt)) return false
 
-  return value.problems.every((problem) => {
+  const session = value as unknown as TrainingSession
+  return hasValidProblemSequence(session) && hasConsistentProgress(session)
+}
+
+function hasValidProblemSequence(session: TrainingSession): boolean {
+  const ids = new Set<string>()
+
+  return session.problems.every((problem) => {
+    if (ids.has(problem.id)) return false
+    ids.add(problem.id)
+
+    const operandsMatchConfig = problem.operands.every(
+      (operand) =>
+        /^[1-9]\d*$/.test(operand) &&
+        operand.length >= session.config.minDigits &&
+        operand.length <= session.config.maxDigits,
+    )
+    const operatorsMatchConfig =
+      problem.operators.length === session.config.operatorCount &&
+      problem.operators.every((operation) => session.config.operations.includes(operation))
+    const distinctOperators = new Set(problem.operators).size
+    const modeMatchesConfig =
+      session.config.operationMode === 'same' ? distinctOperators === 1 : distinctOperators >= 2
     const answer = evaluateExpression(problem.operands.map(BigInt), problem.operators)
-    return answer !== null && String(answer) === problem.answer
+
+    return (
+      operandsMatchConfig &&
+      operatorsMatchConfig &&
+      modeMatchesConfig &&
+      answer !== null &&
+      String(answer) === problem.answer
+    )
   })
+}
+
+function hasConsistentProgress(session: TrainingSession): boolean {
+  let expectedMistakes = 0
+
+  for (const [index, item] of session.progress.entries()) {
+    const problem = session.problems[index]
+    if (!problem) return false
+
+    if (item.status === 'correct') {
+      if (
+        item.attempts < 1 ||
+        item.feedback !== 'correct' ||
+        item.draft === '' ||
+        BigInt(item.draft) !== BigInt(problem.answer)
+      ) {
+        return false
+      }
+      expectedMistakes += item.attempts - 1
+    } else if (item.status === 'revealed') {
+      if (item.feedback !== 'revealed' || item.draft !== problem.answer) return false
+      expectedMistakes += item.attempts + 1
+    } else {
+      if (item.feedback === 'correct' || item.feedback === 'revealed') return false
+      if (item.feedback === 'incorrect' && item.attempts < 1) return false
+      expectedMistakes += item.attempts
+    }
+
+    if (index < session.currentIndex && item.status === 'pending') return false
+    if (
+      index > session.currentIndex &&
+      (item.status !== 'pending' || item.draft !== '' || item.attempts !== 0 || item.feedback !== 'none')
+    ) {
+      return false
+    }
+  }
+
+  const allLocked = session.progress.every((item) => item.status !== 'pending')
+  if (session.completedAt !== null) {
+    if (
+      !allLocked ||
+      session.currentIndex !== session.progress.length - 1 ||
+      session.timerStartedAt !== null ||
+      session.completedAt < session.createdAt
+    ) {
+      return false
+    }
+  }
+
+  return expectedMistakes === session.mistakes
 }
 
 function isProblem(value: unknown): value is Problem {
