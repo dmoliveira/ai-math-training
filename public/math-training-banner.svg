@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 560" role="img" aria-labelledby="title desc">
+  <title id="title">Math Training</title>
+  <desc id="desc">A warm green banner with arithmetic tiles climbing toward a checkmark, representing growing calculation confidence.</desc>
+  <defs>
+    <pattern id="dots" width="34" height="34" patternUnits="userSpaceOnUse">
+      <circle cx="3" cy="3" r="2.5" fill="#245c4f" opacity=".09"/>
+    </pattern>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#17211b" flood-opacity=".12"/>
+    </filter>
+  </defs>
+  <rect x="8" y="8" width="1584" height="544" rx="46" fill="#f6f7f2" stroke="#dce4dd" stroke-width="4"/>
+  <path d="M8 374C263 304 471 465 742 391c298-82 447-256 850-204v365H8Z" fill="#e2f0eb"/>
+  <rect x="8" y="8" width="1584" height="544" rx="46" fill="url(#dots)"/>
+  <circle cx="1460" cy="82" r="34" fill="#f4b860" opacity=".8"/>
+  <circle cx="1384" cy="492" r="22" fill="#e9785d" opacity=".75"/>
+  <circle cx="802" cy="92" r="10" fill="#245c4f" opacity=".25"/>
+
+  <g transform="translate(108 122)">
+    <g transform="translate(0 1)">
+      <rect width="78" height="78" rx="22" fill="#245c4f"/>
+      <path d="M22 39h34M39 22v34" stroke="#fff" stroke-width="7" stroke-linecap="round"/>
+    </g>
+    <text x="102" y="62" fill="#17211b" font-size="65" font-weight="750" letter-spacing="-2" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif">MATH TRAINING</text>
+    <text x="1" y="135" fill="#56635c" font-size="29" font-weight="500" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif">Small sessions. Clear feedback. Stronger number sense.</text>
+    <g transform="translate(0 186)" fill="none" stroke="#245c4f" stroke-width="3">
+      <rect width="226" height="58" rx="29" fill="#fff"/>
+      <circle cx="32" cy="29" r="10" fill="#1d8a5b" stroke="none"/>
+      <text x="54" y="38" fill="#245c4f" stroke="none" font-size="23" font-weight="650" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif">Practice your way</text>
+    </g>
+  </g>
+
+  <path d="M950 390c109-36 141-145 247-160 84-12 117 45 210-32" fill="none" stroke="#245c4f" stroke-width="5" stroke-linecap="round" stroke-dasharray="3 16" opacity=".48"/>
+  <g filter="url(#shadow)" font-family="ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif" font-weight="750" text-anchor="middle">
+    <g transform="translate(890 337) rotate(-8)">
+      <rect width="142" height="142" rx="34" fill="#fff" stroke="#245c4f" stroke-width="4"/>
+      <text x="71" y="94" font-size="67" fill="#245c4f">+</text>
+    </g>
+    <g transform="translate(1084 245) rotate(6)">
+      <rect width="142" height="142" rx="34" fill="#f4b860" stroke="#245c4f" stroke-width="4"/>
+      <text x="71" y="94" font-size="66" fill="#17211b">×</text>
+    </g>
+    <g transform="translate(1278 144) rotate(-5)">
+      <rect width="142" height="142" rx="34" fill="#e9785d" stroke="#245c4f" stroke-width="4"/>
+      <text x="71" y="91" font-size="65" fill="#fff">÷</text>
+    </g>
+  </g>
+  <g transform="translate(1432 96)">
+    <circle cx="46" cy="46" r="44" fill="#245c4f"/>
+    <path d="m23 47 14 14 31-34" fill="none" stroke="#fff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M46-8v-18M46 118v18M-8 46h-18M118 46h18M8 8-5-5M84 84l13 13M84 8 97-5M8 84-5 97" stroke="#f4b860" stroke-width="5" stroke-linecap="round"/>
+  </g>
+</svg>

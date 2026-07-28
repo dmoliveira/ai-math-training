@@ -152,20 +152,28 @@ function isProblemProgress(value: unknown): value is ProblemProgress {
 }
 
 function isTrainingConfig(value: unknown): value is TrainingConfig {
-  if (!isRecord(value) || !Array.isArray(value.operations) || !value.operations.every(isOperation)) {
+  if (
+    !isRecord(value) ||
+    typeof value.minDigits !== 'number' ||
+    typeof value.maxDigits !== 'number' ||
+    typeof value.operatorCount !== 'number' ||
+    typeof value.problemCount !== 'number' ||
+    (value.operationMode !== 'same' && value.operationMode !== 'mixed') ||
+    !Array.isArray(value.operations) ||
+    !value.operations.every(isOperation)
+  ) {
     return false
   }
 
   const candidate: TrainingConfig = {
-    minDigits: Number(value.minDigits),
-    maxDigits: Number(value.maxDigits),
-    operatorCount: Number(value.operatorCount),
-    operationMode: value.operationMode === 'mixed' ? 'mixed' : 'same',
+    minDigits: value.minDigits,
+    maxDigits: value.maxDigits,
+    operatorCount: value.operatorCount,
+    operationMode: value.operationMode,
     operations: [...value.operations],
-    problemCount: Number(value.problemCount),
+    problemCount: value.problemCount,
   }
 
-  if (value.operationMode !== 'same' && value.operationMode !== 'mixed') return false
   return validateConfig(candidate).length === 0
 }
 
