@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MathTrainingApp } from './app'
 import { DEFAULT_CONFIG } from './math/engine'
+import { DEFAULT_PREFERENCES, type SharePayload } from './sprint/contracts'
+import type { ResultPage, ResultStore } from './sprint/results'
 import { createTrainingSession, pauseSession } from './state/session'
 import {
   APP_SCHEMA_VERSION,
@@ -16,6 +18,7 @@ const createPracticeState = (): PersistedAppState => {
     schemaVersion: APP_SCHEMA_VERSION,
     view: 'practice',
     settings: config,
+    preferences: { ...DEFAULT_PREFERENCES },
     session,
   }
 }
@@ -24,6 +27,23 @@ const createStore = (result: StoreLoadResult) => ({
   load: vi.fn(() => result),
   save: vi.fn(() => true),
   clear: vi.fn(() => true),
+  clearAll: vi.fn(() => true),
+})
+
+const emptyResultPage = (): ResultPage => ({
+  status: 'ok',
+  results: [],
+  nextCursor: null,
+  corruptRecords: 0,
+})
+
+const createResultStore = (): ResultStore => ({
+  saveCompleted: vi.fn(async () => ({ status: 'saved' as const })),
+  getById: vi.fn(async () => null),
+  listCompleted: vi.fn(async () => emptyResultPage()),
+  listRanked: vi.fn(async () => emptyResultPage()),
+  listCompletedSince: vi.fn(async () => emptyResultPage()),
+  clearConfig: vi.fn(async () => ({ status: 'cleared' as const })),
 })
 
 function setVisibility(value: DocumentVisibilityState): void {
@@ -191,6 +211,196 @@ describe('MathTrainingApp lifecycle', () => {
     expect(store.save).toHaveBeenCalledTimes(saveCount)
   })
 
+  it('renders vertical practice, skips with a scored penalty, and plays unlocked cues', async () => {
+    let now = 1_000
+    const audio = {
+      unlockFromUserGesture: vi.fn(async () => true),
+      play: vi.fn(),
+      suspend: vi.fn(),
+    }
+    const root = document.querySelector<HTMLElement>('#app')!
+    const resultStore = createResultStore()
+    const app = new MathTrainingApp(root, {
+      store: createStore({ status: 'empty', state: null }),
+      resultStore,
+      now: () => now,
+      createSeed: () => 7,
+      audio,
+    })
+    app.start()
+
+    root.querySelector<HTMLInputElement>('#layout-vertical')!.click()
+    root.querySelector<HTMLInputElement>('#audio-enabled')!.click()
+    const problemCount = root.querySelector<HTMLInputElement>('#problem-count')!
+    problemCount.value = '1'
+    problemCount.dispatchEvent(new Event('input', { bubbles: true }))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(audio.unlockFromUserGesture).toHaveBeenCalledOnce()
+
+    root.querySelector<HTMLFormElement>('#setup-form')!.dispatchEvent(
+      new SubmitEvent('submit', { bubbles: true, cancelable: true }),
+    )
+    expect(root.querySelector('.expression--vertical')).not.toBeNull()
+    expect(root.textContent).toContain('0% complete')
+
+    now = 4_000
+    root.querySelector<HTMLButtonElement>('[data-action="skip"]')!.click()
+    expect(root.textContent).toContain('20 seconds added to your scored time')
+    expect(root.textContent).toContain('100% complete')
+    expect(root.querySelector('#question-time')?.textContent).toBe('00:03')
+    expect(audio.play).toHaveBeenCalledWith('skip')
+
+    root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(
+      new SubmitEvent('submit', { bubbles: true, cancelable: true }),
+    )
+    expect(root.textContent).toContain('Session complete.')
+    expect(root.textContent).not.toContain('Perfect run!')
+    expect(root.textContent).toContain('Scored time')
+    expect(root.textContent).toContain('00:23')
+    expect(root.textContent).toContain('Skipped (+20s)')
+    expect(audio.play).toHaveBeenCalledWith('complete')
+    await vi.waitFor(() => expect(resultStore.saveCompleted).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(root.textContent).toContain('Personal top five'))
+    expect(root.textContent).toContain('New best')
+
+    app.destroy()
+    expect(audio.suspend).toHaveBeenCalled()
+  })
+
+  it('unlocks a restored sound preference before playing its first action cue', async () => {
+    const state = createPracticeState()
+    state.preferences.audioEnabled = true
+    const audio = {
+      unlockFromUserGesture: vi.fn(async () => true),
+      play: vi.fn(),
+      suspend: vi.fn(),
+    }
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, {
+      store: createStore({ status: 'ok', state }),
+      now: () => 2_000,
+      audio,
+    })
+    app.start()
+    root.querySelector<HTMLButtonElement>('[data-action="skip"]')!.click()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(audio.unlockFromUserGesture).toHaveBeenCalled()
+    expect(audio.play).toHaveBeenCalledWith('skip')
+    app.destroy()
+  })
+
+  it('invalidates a pending audio cue when practice is suspended', async () => {
+    const state = createPracticeState()
+    state.preferences.audioEnabled = true
+    let resolveUnlock: (value: boolean) => void = () => undefined
+    const pendingUnlock = new Promise<boolean>((resolve) => { resolveUnlock = resolve })
+    const audio = {
+      unlockFromUserGesture: vi.fn(() => pendingUnlock),
+      play: vi.fn(),
+      suspend: vi.fn(),
+    }
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, {
+      store: createStore({ status: 'ok', state }),
+      now: () => 2_000,
+      audio,
+    })
+    app.start()
+    root.querySelector<HTMLButtonElement>('[data-action="skip"]')!.click()
+    setVisibility('hidden')
+    document.dispatchEvent(new Event('visibilitychange'))
+    resolveUnlock(true)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(audio.play).not.toHaveBeenCalled()
+    expect(audio.suspend).toHaveBeenCalled()
+    app.destroy()
+  })
+
+  it('keeps completion usable while warning when private history cannot save', async () => {
+    const resultStore = createResultStore()
+    resultStore.saveCompleted = vi.fn(async () => ({ status: 'quota-exceeded' as const }))
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, {
+      store: createStore({ status: 'ok', state: createPracticeState() }),
+      resultStore,
+      now: () => 2_000,
+    })
+    app.start()
+    root.querySelector<HTMLButtonElement>('[data-action="skip"]')!.click()
+    root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(root.textContent).toContain('private rankings are unavailable'))
+    await vi.waitFor(() => expect(document.querySelector('#app-announcer')?.textContent).toContain('could not be saved'))
+    expect(root.textContent).toContain('Session complete.')
+    app.destroy()
+  })
+
+  it('surfaces corrupt records discovered while loading another history page', async () => {
+    const resultStore = createResultStore()
+    const listCompleted = vi.fn()
+      .mockResolvedValueOnce({ ...emptyResultPage(), nextCursor: 'next-page' })
+      .mockResolvedValueOnce({ ...emptyResultPage(), corruptRecords: 1 })
+    resultStore.listCompleted = listCompleted
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store: createStore({ status: 'empty', state: null }), resultStore, now: () => 2_000 })
+    app.start()
+    await vi.waitFor(() => expect(root.querySelector('[data-action="load-history"]')).not.toBeNull())
+    root.querySelector<HTMLButtonElement>('[data-action="load-history"]')!.click()
+    await vi.waitFor(() => expect(root.textContent).toContain('History is unavailable'))
+    expect(root.querySelector('[data-action="show-reset"]')).not.toBeNull()
+    app.destroy()
+  })
+
+  it('shares only aggregate completion data and announces share outcomes', async () => {
+    const share = { share: vi.fn(async (payload: SharePayload) => { void payload; return 'shared' as const }), copy: vi.fn(async (payload: SharePayload) => { void payload; return 'copied' as const }) }
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, {
+      store: createStore({ status: 'ok', state: createPracticeState() }),
+      resultStore: createResultStore(),
+      share,
+      now: () => 2_000,
+    })
+    app.start()
+    root.querySelector<HTMLButtonElement>('[data-action="skip"]')!.click()
+    root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    root.querySelector<HTMLButtonElement>('[data-action="share-result"]')!.click()
+    await vi.waitFor(() => expect(share.share).toHaveBeenCalledOnce())
+    const payload = share.share.mock.calls[0]![0]
+    expect(payload.text).toContain('Mental Math Sprint')
+    expect(payload.text).not.toContain('session-')
+    expect(payload.url).toBe('https://dmoliveira.github.io/mental-math-sprint/')
+    await vi.waitFor(() => expect(document.querySelector('#app-announcer')?.textContent).toBe('Result shared.'))
+
+    root.querySelector<HTMLButtonElement>('[data-action="copy-result"]')!.click()
+    await vi.waitFor(() => expect(share.copy).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(document.querySelector('#app-announcer')?.textContent).toBe('Result copied.'))
+    for (const link of root.querySelectorAll<HTMLAnchorElement>('.social-links a')) {
+      expect(link.rel).toContain('noopener')
+      expect(link.rel).toContain('noreferrer')
+    }
+    app.destroy()
+  })
+
+  it('falls back to horizontal rendering for chained questions', () => {
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, {
+      store: createStore({ status: 'empty', state: null }),
+      now: () => 1_000,
+      createSeed: () => 7,
+    })
+    app.start()
+    root.querySelector<HTMLInputElement>('#layout-vertical')!.click()
+    root.querySelector<HTMLInputElement>('#operator-count-2')!.click()
+    root.querySelector<HTMLFormElement>('#setup-form')!.dispatchEvent(
+      new SubmitEvent('submit', { bubbles: true, cancelable: true }),
+    )
+    expect(root.querySelector('.expression--vertical')).toBeNull()
+    expect(root.querySelector('.expression__pieces')).not.toBeNull()
+    app.destroy()
+  })
+
   it('distinguishes unavailable storage from invalid saved progress', () => {
     const root = document.querySelector<HTMLElement>('#app')!
     const unavailableStore = createStore({ status: 'unavailable', state: null })
@@ -206,7 +416,8 @@ describe('MathTrainingApp lifecycle', () => {
     const invalidApp = new MathTrainingApp(invalidRoot, { store: invalidStore, now: () => 1_000 })
     invalidApp.start()
     expect(invalidRoot.textContent).toContain('saved session could not be restored')
-    expect(invalidStore.clear).toHaveBeenCalledOnce()
+    expect(invalidStore.clearAll).toHaveBeenCalledOnce()
+    expect(invalidStore.clear).not.toHaveBeenCalled()
     invalidApp.destroy()
   })
 })

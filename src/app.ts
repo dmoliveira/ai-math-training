@@ -18,14 +18,21 @@ import {
   createTrainingSession,
   deleteCurrentDigit,
   formatDuration,
+  getCurrentProblemElapsedMs,
   getElapsedMs,
   pauseSession,
   resumeSession,
   revealCurrentAnswer,
   setCurrentDraft,
+  skipCurrentProblem,
   summarizeSession,
   type TrainingSession,
 } from './state/session'
+import { DEFAULT_PREFERENCES, configKey, effectiveOrientation, type AudioCue, type AudioPort, type SharePort } from './sprint/contracts'
+import { SynthAudio } from './sprint/audio'
+import { BrowserShare, createSocialShareLinks } from './sprint/share'
+import { createSharePayload, createSprintResult, dailyStatistics, rankResults, type DailyStatistics, type ResultStore, type SprintResult } from './sprint/results'
+import { IndexedDbResultStore } from './storage/result-store'
 import {
   APP_SCHEMA_VERSION,
   ProgressStore,
@@ -33,12 +40,17 @@ import {
   type StoreLoadResult,
 } from './storage/progress-store'
 
-type StorePort = Pick<ProgressStore, 'load' | 'save' | 'clear'>
+const PUBLIC_APP_URL = 'https://dmoliveira.github.io/mental-math-sprint/'
+
+type StorePort = Pick<ProgressStore, 'load' | 'save' | 'clear' | 'clearAll'>
 
 export interface AppDependencies {
   store?: StorePort
   now?: () => number
   createSeed?: () => number
+  audio?: AudioPort
+  resultStore?: ResultStore
+  share?: SharePort
 }
 
 interface Notice {
@@ -46,11 +58,31 @@ interface Notice {
   tone: 'info' | 'warning'
 }
 
+interface HistoryViewState {
+  configKey: string
+  status: 'loading' | 'ok' | 'error'
+  results: SprintResult[]
+  ranked: SprintResult[]
+  daily: DailyStatistics[]
+  nextCursor: string | null
+}
+
 export class MathTrainingApp {
   private readonly root: HTMLElement
   private readonly store: StorePort
   private readonly now: () => number
   private readonly createSeed: () => number
+  private readonly audio: AudioPort
+  private readonly resultStore: ResultStore
+  private readonly share: SharePort
+  private audioUnlocked = false
+  private audioUnlockPromise: Promise<boolean> | null = null
+  private pendingAudioCue: AudioCue | null = null
+  private audioCycle = 0
+  private historyGeneration = 0
+  private history: HistoryViewState | null = null
+  private currentResult: SprintResult | null = null
+  private sharePending = false
   private readonly announcer: HTMLParagraphElement
   private state: PersistedAppState
   private notice: Notice | null = null
@@ -65,6 +97,9 @@ export class MathTrainingApp {
     this.store = dependencies.store ?? new ProgressStore()
     this.now = dependencies.now ?? Date.now
     this.createSeed = dependencies.createSeed ?? createRandomSeed
+    this.audio = dependencies.audio ?? new SynthAudio()
+    this.resultStore = dependencies.resultStore ?? new IndexedDbResultStore()
+    this.share = dependencies.share ?? new BrowserShare()
     this.announcer = document.createElement('p')
     this.announcer.id = 'app-announcer'
     this.announcer.className = 'sr-only app-announcer'
@@ -78,6 +113,7 @@ export class MathTrainingApp {
     this.started = true
 
     this.restore(this.store.load())
+    if (this.state.session?.completedAt !== null && this.state.session) this.currentResult = createSprintResult(this.state.session)
     if (!this.announcer.isConnected) this.root.insertAdjacentElement('afterend', this.announcer)
     this.root.addEventListener('click', this.handleClick)
     this.root.addEventListener('change', this.handleChange)
@@ -89,6 +125,8 @@ export class MathTrainingApp {
     this.timerId = window.setInterval(this.handleTimerTick, 250)
 
     this.render()
+    if (this.currentResult) void this.persistCompletedResult(this.currentResult)
+    else void this.refreshHistory()
     if (this.state.view !== 'setup') this.focusCurrentView()
   }
 
@@ -108,6 +146,8 @@ export class MathTrainingApp {
     this.announcementTimerId = null
     this.announcer.textContent = ''
     this.announcer.remove()
+    this.suspendAudio()
+    this.historyGeneration += 1
     this.started = false
   }
 
@@ -144,6 +184,9 @@ export class MathTrainingApp {
       case 'confirm-restart':
         this.restartSession()
         break
+      case 'skip':
+        this.skipQuestion()
+        break
       case 'open-reveal':
         this.openDialog('reveal-dialog')
         break
@@ -162,6 +205,21 @@ export class MathTrainingApp {
       case 'change-settings':
         this.changeSettings()
         break
+      case 'share-result':
+        void this.shareCurrentResult(false)
+        break
+      case 'copy-result':
+        void this.shareCurrentResult(true)
+        break
+      case 'load-history':
+        void this.loadMoreHistory()
+        break
+      case 'show-reset':
+        this.openDialog('reset-history-dialog')
+        break
+      case 'confirm-reset-history':
+        void this.resetHistory()
+        break
       default:
         break
     }
@@ -171,6 +229,26 @@ export class MathTrainingApp {
     const target = event.target
     if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return
     if (!target.closest('#setup-form')) return
+
+    if (target.name === 'orientation' || target.name === 'audioEnabled') {
+      const preferences = { ...this.state.preferences }
+      if (target.name === 'orientation') {
+        preferences.orientation = target.value === 'vertical' ? 'vertical' : 'horizontal'
+        this.announce(`${preferences.orientation === 'vertical' ? 'Vertical' : 'Horizontal'} layout selected.`)
+      } else if (target instanceof HTMLInputElement) {
+        preferences.audioEnabled = target.checked
+        if (target.checked) void this.enableAudio()
+        else {
+          this.suspendAudio()
+          this.announce('Sound cues off.')
+        }
+      }
+      this.state = { ...this.state, preferences }
+      this.persist(true)
+      this.render()
+      window.requestAnimationFrame(() => document.getElementById(target.id)?.focus())
+      return
+    }
 
     const next = cloneConfig(this.state.settings)
     const focusId = target.id
@@ -215,6 +293,7 @@ export class MathTrainingApp {
     this.state = { ...this.state, settings: next }
     this.persist()
     this.render()
+    void this.refreshHistory()
     if (announcement) this.announce(announcement)
     window.requestAnimationFrame(() => document.getElementById(focusId)?.focus())
   }
@@ -227,6 +306,9 @@ export class MathTrainingApp {
       const session = this.state.session
       if (!session) return
       const updated = setCurrentDraft(session, target.value)
+      if (updated !== session) {
+        this.playCue(updated.progress[updated.currentIndex]!.draft.length < session.progress[session.currentIndex]!.draft.length ? 'erase' : 'type')
+      }
       this.state = { ...this.state, session: updated }
       this.syncAnswerControls()
       this.persist()
@@ -272,12 +354,12 @@ export class MathTrainingApp {
 
     if (event.key === 'Escape' || event.key === '*') {
       event.preventDefault()
-      this.updateSession(clearCurrentDraft)
+      if (this.updateSession(clearCurrentDraft)) this.playCue('erase')
       this.syncAnswerControls()
       this.persist()
     } else if (event.key === '-') {
       event.preventDefault()
-      this.updateSession(deleteCurrentDigit)
+      if (this.updateSession(deleteCurrentDigit)) this.playCue('erase')
       this.syncAnswerControls()
       this.persist()
     }
@@ -288,6 +370,7 @@ export class MathTrainingApp {
     if (!session || this.state.view !== 'practice' || session.completedAt !== null) return
 
     if (document.visibilityState === 'hidden') {
+      this.suspendAudio()
       this.state = { ...this.state, session: pauseSession(session, this.now()) }
       this.persist(true)
     } else {
@@ -324,7 +407,7 @@ export class MathTrainingApp {
     }
 
     if (result.status === 'invalid') {
-      this.store.clear()
+      this.store.clearAll()
       this.notice = {
         message: 'Your saved session could not be restored, so a fresh setup is ready.',
         tone: 'warning',
@@ -353,9 +436,14 @@ export class MathTrainingApp {
         ${this.notice ? this.renderNotice(this.notice) : ''}
       </div>
       ${content}
+      <aside class="support-card" aria-labelledby="support-heading">
+        <div><p class="step-label">Keep practice accessible</p><h2 id="support-heading">Support this free project</h2><p>Every practice feature stays free. Optional contributions help maintain and improve the app.</p></div>
+        <a class="button button--secondary" href="https://buy.stripe.com/8x200i8bSgVe3Vl3g8bfO00" target="_blank" rel="noopener noreferrer">Support via Stripe <span class="sr-only">(opens in a new tab)</span></a>
+        <small>Stripe handles payment details under its own privacy terms. No practice data is sent.</small>
+      </aside>
       <footer class="site-footer">
-        <p><span aria-hidden="true">🔒</span> Your practice stays in this browser. No account, cookies, or tracking.</p>
-        <a href="https://github.com/dmoliveira/ai-math-training" target="_blank" rel="noreferrer">View source <span class="sr-only">(opens in a new tab)</span></a>
+        <p><span aria-hidden="true">🔒</span> Settings and completed history stay in this browser. No account or tracking.</p>
+        <a href="https://github.com/dmoliveira/mental-math-sprint" target="_blank" rel="noopener noreferrer">View source <span class="sr-only">(opens in a new tab)</span></a>
       </footer>
     `
   }
@@ -376,12 +464,17 @@ export class MathTrainingApp {
     return `
       <header class="site-header">
         <div class="site-header__inner">
-          <button class="brand" type="button" data-action="home" aria-label="Math Training home">
+          <button class="brand" type="button" data-action="home" aria-label="Mental Math Sprint home">
             <span class="brand__mark" aria-hidden="true">
               <span>+</span><span>×</span>
             </span>
-            <span class="brand__name">Math Training</span>
+            <span class="brand__name">Mental Math Sprint</span>
           </button>
+          <nav class="creator-nav" aria-label="Creator links">
+            <a href="https://dmoliveira.github.io/my-cv-public/cv/human/" target="_blank" rel="noopener noreferrer">CV<span class="sr-only"> (opens in a new tab)</span></a>
+            <a href="https://github.com/dmoliveira" target="_blank" rel="noopener noreferrer">GitHub<span class="sr-only"> (opens in a new tab)</span></a>
+            <a href="https://www.linkedin.com/in/dmztheone/" target="_blank" rel="noopener noreferrer">LinkedIn<span class="sr-only"> (opens in a new tab)</span></a>
+          </nav>
           ${practiceActions}
         </div>
       </header>
@@ -398,14 +491,14 @@ export class MathTrainingApp {
     return `
       <main id="main-content" class="page-shell setup-page">
         <section class="setup-hero" aria-labelledby="setup-heading">
-          <div class="eyebrow"><span aria-hidden="true">✦</span> Focused arithmetic practice</div>
-          <h1 id="setup-heading" tabindex="-1">Sharpen your number sense.</h1>
-          <p class="lede">Build a session that meets you where you are, then strengthen speed and confidence one answer at a time.</p>
-          <img class="hero-art" src="${import.meta.env.BASE_URL}math-training-banner.svg" alt="" width="1600" height="560" />
+          <div class="eyebrow"><span aria-hidden="true">✦</span> Your next personal best starts here</div>
+          <h1 id="setup-heading" tabindex="-1">Train fast. Think clearly. Beat your best.</h1>
+          <p class="lede">Configure your sprint, race the clock, and build speed one focused answer at a time.</p>
+          <img class="hero-art" src="${import.meta.env.BASE_URL}mental-math-sprint-banner.svg" alt="" width="1600" height="560" />
           <ul class="benefit-list" aria-label="Practice benefits">
-            <li><span aria-hidden="true">✓</span> Your level, your pace</li>
-            <li><span aria-hidden="true">✓</span> Instant, calm feedback</li>
-            <li><span aria-hidden="true">✓</span> Progress saved locally</li>
+            <li><span aria-hidden="true">✓</span> Your rules, your pace</li>
+            <li><span aria-hidden="true">✓</span> Fast, clear feedback</li>
+            <li><span aria-hidden="true">✓</span> Personal bests saved privately</li>
           </ul>
         </section>
 
@@ -498,14 +591,34 @@ export class MathTrainingApp {
               <p class="selection-note">Choose any amount from 1 to 50.</p>
             </fieldset>
 
+            <fieldset class="setting-group">
+              <legend>Practice options</legend>
+              <p class="field-hint">Choose how questions look and whether optional feedback sounds play.</p>
+              <div class="practice-options">
+                <div>
+                  <span class="number-field__label">Problem layout</span>
+                  <div class="segmented-control">
+                    <label><input id="layout-horizontal" type="radio" name="orientation" value="horizontal" ${checked(this.state.preferences.orientation === 'horizontal')} /><span>Horizontal</span></label>
+                    <label><input id="layout-vertical" type="radio" name="orientation" value="vertical" ${checked(this.state.preferences.orientation === 'vertical')} /><span>Vertical</span></label>
+                  </div>
+                  <p class="selection-note">Vertical stacks one-operation questions. Chained questions stay horizontal.</p>
+                </div>
+                <label class="sound-option" for="audio-enabled">
+                  <input id="audio-enabled" type="checkbox" name="audioEnabled" ${checked(this.state.preferences.audioEnabled)} />
+                  <span><strong>Play sound cues</strong><small>Optional feedback sounds; every result also appears on screen.</small></span>
+                </label>
+              </div>
+            </fieldset>
+
             ${example}
             ${errors.length > 0 ? this.renderConfigErrors(errors) : ''}
 
             <button class="button button--primary button--large" type="submit" ${disabled(errors.length > 0)}>
-              Start practice <span aria-hidden="true">→</span>
+              Start sprint <span aria-hidden="true">→</span>
             </button>
             <p class="keyboard-note"><span aria-hidden="true">⌨</span> Built for keyboard and number-pad practice.</p>
           </form>
+          <div id="history-card-host">${this.renderHistoryCard()}</div>
         </div>
 
         ${this.renderSetupDialogs()}
@@ -604,6 +717,15 @@ export class MathTrainingApp {
         true,
       )}
       ${dialogMarkup(
+        'reset-history-dialog',
+        'Reset performance history?',
+        'Completed results for the current arithmetic settings will be permanently deleted. Your settings and active session stay intact.',
+        'Keep history',
+        'Reset history',
+        'confirm-reset-history',
+        true,
+      )}
+      ${dialogMarkup(
         'replace-dialog',
         'Start a new session?',
         'Your saved session will be replaced with this setup.',
@@ -622,19 +744,22 @@ export class MathTrainingApp {
 
     const locked = progress.status !== 'pending'
     const isLast = session.currentIndex === session.problems.length - 1
-    const progressValue = locked ? session.currentIndex + 1 : session.currentIndex
+    const progressValue = session.progress.filter((item) => item.status !== 'pending').length
+    const percent = Math.round((progressValue / session.problems.length) * 100)
+    const questionElapsed = getCurrentProblemElapsedMs(session, this.now())
 
     return `
       <main id="main-content" class="page-shell practice-page">
         <section class="session-toolbar" aria-label="Session progress">
           <div class="progress-copy">
-            <span>Question <strong>${session.currentIndex + 1}</strong> of ${session.problems.length}</span>
-            <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="${session.problems.length}" aria-valuenow="${progressValue}" aria-label="${progressValue} of ${session.problems.length} questions completed">
+            <span>Question <strong>${session.currentIndex + 1}</strong> of ${session.problems.length} · ${percent}% complete</span>
+            <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="${session.problems.length}" aria-valuenow="${progressValue}" aria-label="Session completion" aria-valuetext="${progressValue} of ${session.problems.length} questions complete, ${percent} percent">
               <span style="width: ${(progressValue / session.problems.length) * 100}%"></span>
             </div>
           </div>
           <dl class="session-metrics">
-            <div><dt>Time</dt><dd id="elapsed-time">${formatDuration(getElapsedMs(session, this.now()))}</dd></div>
+            <div><dt>Session time</dt><dd id="elapsed-time">${formatDuration(getElapsedMs(session, this.now()))}</dd></div>
+            <div><dt>This question</dt><dd id="question-time">${questionElapsed === null ? '—' : formatDuration(questionElapsed)}</dd></div>
             <div><dt>Mistakes</dt><dd>${session.mistakes}</dd></div>
           </dl>
         </section>
@@ -645,12 +770,14 @@ export class MathTrainingApp {
               const stateLabel =
                 item.status === 'correct'
                   ? 'correct'
-                  : item.status === 'revealed'
+                  : item.status === 'skipped'
+                    ? 'skipped, 20-second penalty'
+                    : item.status === 'revealed'
                     ? 'revealed'
                     : index === session.currentIndex
                       ? 'current'
                       : 'not answered'
-              return `<li class="question-dot question-dot--${item.status} ${index === session.currentIndex ? 'question-dot--current' : ''}" aria-label="Question ${index + 1}: ${stateLabel}"><span>${item.status === 'correct' ? '✓' : item.status === 'revealed' ? '•' : index + 1}</span></li>`
+              return `<li class="question-dot question-dot--${item.status} ${index === session.currentIndex ? 'question-dot--current' : ''}" aria-label="Question ${index + 1}: ${stateLabel}"><span>${item.status === 'correct' ? '✓' : item.status === 'skipped' ? '—' : item.status === 'revealed' ? '•' : index + 1}</span></li>`
             })
             .join('')}
         </ol>
@@ -659,7 +786,7 @@ export class MathTrainingApp {
           <div class="problem-panel">
             <p class="step-label">Question ${session.currentIndex + 1}</p>
             <h1 id="problem-heading" class="problem-heading" tabindex="-1">Solve the expression</h1>
-            ${renderExpression(problem)}
+            ${renderExpression(problem, this.state.preferences.orientation)}
 
             <form id="answer-form" class="answer-form" novalidate>
               <label for="answer-input">Your answer</label>
@@ -694,7 +821,7 @@ export class MathTrainingApp {
                 ${
                   locked
                     ? ''
-                    : '<button class="button button--quiet" type="button" data-action="open-reveal">Reveal answer</button>'
+                    : '<div class="secondary-actions"><button class="button button--quiet" type="button" data-action="open-reveal">Reveal answer</button><button class="button button--quiet" type="button" data-action="skip">Skip question (+20s)</button></div>'
                 }
               </div>
             </form>
@@ -738,7 +865,7 @@ export class MathTrainingApp {
 
   private renderCompletion(session: TrainingSession): string {
     const summary = summarizeSession(session, this.now())
-    const perfect = summary.mistakes === 0 && summary.revealed === 0
+    const perfect = summary.mistakes === 0 && summary.revealed === 0 && summary.skipped === 0
     const review = this.renderCompletionReview(session)
 
     return `
@@ -763,15 +890,17 @@ export class MathTrainingApp {
               <dd>${summary.mistakes}<small>${summary.revealed} ${pluralize(summary.revealed, 'answer')} revealed</small></dd>
             </div>
             <div class="result-card">
-              <dt>Active time</dt>
-              <dd>${formatDuration(summary.elapsedMs)}<small>Paused when you stepped away</small></dd>
+              <dt>Scored time</dt>
+              <dd>${formatDuration(summary.scoredElapsedMs)}<small>${formatDuration(summary.elapsedMs)} active + ${formatDuration(summary.penaltyMs)} penalties</small></dd>
             </div>
           </dl>
 
+          <div id="completion-ranking-host">${this.renderCompletionRanking(session)}</div>
           ${review}
+          ${this.renderShareCard(session)}
 
           <div class="completion-actions">
-            <button class="button button--primary button--large" type="button" data-action="practice-again">Practice again <span aria-hidden="true">↻</span></button>
+            <button class="button button--primary button--large" type="button" data-action="practice-again">Sprint again <span aria-hidden="true">↻</span></button>
             <button class="button button--secondary button--large" type="button" data-action="change-settings">Change settings</button>
           </div>
           <p class="completion-note"><span aria-hidden="true">🌱</span> A little consistent practice makes big numbers feel smaller.</p>
@@ -783,8 +912,16 @@ export class MathTrainingApp {
   private renderCompletionReview(session: TrainingSession): string {
     const reviewItems = session.progress.flatMap((progress, index) => {
       const problem = session.problems[index]
-      if (!problem || (progress.status !== 'revealed' && progress.attempts <= 1)) return []
-      const outcome = progress.status === 'revealed' ? 'Revealed' : `${progress.attempts} attempts`
+      if (
+        !problem ||
+        (progress.status !== 'revealed' && progress.status !== 'skipped' && progress.attempts <= 1)
+      ) return []
+      const outcome =
+        progress.status === 'revealed'
+          ? 'Revealed'
+          : progress.status === 'skipped'
+            ? 'Skipped (+20s)'
+            : `${progress.attempts} attempts`
       return [{ problem, outcome }]
     })
 
@@ -816,6 +953,117 @@ export class MathTrainingApp {
     `
   }
 
+  private renderHistoryCard(): string {
+    const key = configKey(this.state.settings)
+    const snapshot = this.history?.configKey === key ? this.history : null
+    if (!snapshot || snapshot.status === 'loading') return this.historyMessage('Loading results…')
+    if (snapshot.status === 'error') return this.historyMessage('History is unavailable. Practice still works normally.', true)
+    const rows = snapshot.results.length === 0 ? '<p>No completed results yet.</p>' : `<ol class="history-list">${snapshot.results.map((result) => `<li><time>${escapeHtml(formatResultDate(result.completedAt))}</time><strong>${formatDuration(result.totals.scoredElapsedMs)}</strong><span>${result.totals.accuracyPercent}% · ${result.totals.skipped} skipped</span></li>`).join('')}</ol>`
+    const trend = snapshot.daily.length === 0 ? '<p>Complete a session to start your seven-day trend.</p>' : `<ul class="daily-stats">${snapshot.daily.map((day) => `<li><strong>${escapeHtml(day.date)}</strong><span>Best ${formatDuration(day.bestMs)}</span><span>Average ${formatDuration(day.averageMs)}</span><span>Median ${formatDuration(day.medianMs)}</span></li>`).join('')}</ul>`
+    return `<section class="history-card" aria-labelledby="history-heading"><p class="step-label">Private on this device</p><h2 id="history-heading">Performance history</h2>${trend}<h3>Full history</h3>${rows}<div class="history-actions">${snapshot.nextCursor ? '<button class="button button--secondary" type="button" data-action="load-history">Load more</button>' : ''}<button class="button button--quiet" type="button" data-action="show-reset" ${disabled(snapshot.results.length === 0)}>Reset this history</button></div></section>`
+  }
+
+  private historyMessage(message: string, canReset = false): string {
+    return `<section class="history-card"><p class="step-label">Private on this device</p><h2>Performance history</h2><p>${escapeHtml(message)}</p>${canReset ? '<button class="button button--quiet" type="button" data-action="show-reset">Reset this history</button>' : ''}</section>`
+  }
+  private renderCompletionRanking(session: TrainingSession): string {
+    const result = this.currentResult ?? createSprintResult(session)
+    if (!result) return ''
+    const snapshot = this.history?.configKey === result.configKey ? this.history : null
+    if (!snapshot || snapshot.status === 'loading') return '<section class="ranking-card"><p>Saving your private result…</p></section>'
+    if (snapshot.status === 'error') return '<section class="ranking-card"><p>Your result is complete, but private rankings are unavailable.</p></section>'
+    const ranked = rankResults([...snapshot.ranked.filter((item) => item.id !== result.id), result], 5)
+    const isBest = result.rankEligible && ranked[0]?.id === result.id
+    return `<section class="ranking-card" aria-labelledby="ranking-heading"><div class="history-heading"><h2 id="ranking-heading">Personal top five</h2>${isBest ? '<span class="best-badge">New best</span>' : ''}</div>${result.rankEligible ? '' : '<p>Revealed-answer sessions are not ranked.</p>'}<ol>${ranked.map((item) => `<li class="${item.id === result.id ? 'ranking-current' : ''}"><span>${item.id === result.id ? 'This run' : escapeHtml(formatResultDate(item.completedAt))}</span><strong>${formatDuration(item.totals.scoredElapsedMs)}</strong><small>${item.totals.mistakes} mistakes · ${item.totals.skipped} skipped</small></li>`).join('')}</ol></section>`
+  }
+  private async persistCompletedResult(result: SprintResult): Promise<void> {
+    const generation = ++this.historyGeneration
+    const write = await this.resultStore.saveCompleted(result)
+    if (!this.started || generation !== this.historyGeneration) return
+    if (write.status !== 'saved' && write.status !== 'duplicate') {
+      this.history = { configKey: result.configKey, status: 'error', results: [], ranked: [], daily: [], nextCursor: null }
+      this.syncHistorySurfaces()
+      this.announce('This result could not be saved to private history. Your completed session is still available now.')
+      return
+    }
+    await this.refreshHistory(result.config)
+  }
+
+  private async refreshHistory(config: TrainingConfig = this.state.view === 'complete' && this.state.session ? this.state.session.config : this.state.settings): Promise<void> {
+    const key = configKey(config)
+    const generation = ++this.historyGeneration
+    this.history = { configKey: key, status: 'loading', results: [], ranked: [], daily: [], nextCursor: null }
+    this.syncHistorySurfaces()
+    const since = Math.max(0, this.now() - 7 * 24 * 60 * 60 * 1_000)
+    const [page, ranked, recent] = await Promise.all([this.resultStore.listCompleted(key, undefined, 25), this.resultStore.listRanked(key, 5), this.resultStore.listCompletedSince(key, since)])
+    if (!this.started || generation !== this.historyGeneration) return
+    const corruptRecords = page.corruptRecords + ranked.corruptRecords + recent.corruptRecords
+    if (page.status !== 'ok' || ranked.status !== 'ok' || recent.status !== 'ok' || corruptRecords > 0) {
+      this.history = { configKey: key, status: 'error', results: [], ranked: [], daily: [], nextCursor: null }
+      if (corruptRecords > 0) this.announce('Some private history data could not be read. Reset this history to remove damaged records.')
+    } else this.history = { configKey: key, status: 'ok', results: page.results, ranked: ranked.results, daily: dailyStatistics(recent.results, resolvedTimeZone()), nextCursor: page.nextCursor }
+    this.syncHistorySurfaces()
+  }
+
+  private async loadMoreHistory(): Promise<void> {
+    const snapshot = this.history
+    if (!snapshot?.nextCursor || snapshot.status !== 'ok') return
+    const generation = ++this.historyGeneration
+    const page = await this.resultStore.listCompleted(snapshot.configKey, snapshot.nextCursor, 25)
+    if (!this.started || generation !== this.historyGeneration || page.status !== 'ok') return
+    if (page.corruptRecords > 0) {
+      this.history = { configKey: snapshot.configKey, status: 'error', results: [], ranked: [], daily: [], nextCursor: null }
+      this.announce('Some private history data could not be read. Reset this history to remove damaged records.')
+      this.syncHistorySurfaces()
+      return
+    }
+    this.history = { ...snapshot, results: [...snapshot.results, ...page.results.filter((item) => !snapshot.results.some((seen) => seen.id === item.id))], nextCursor: page.nextCursor }
+    this.syncHistorySurfaces()
+  }
+
+  private async resetHistory(): Promise<void> {
+    const config = cloneConfig(this.state.settings)
+    const generation = ++this.historyGeneration
+    const result = await this.resultStore.clearConfig(configKey(config))
+    if (!this.started || generation !== this.historyGeneration) return
+    if (result.status !== 'cleared') { this.announce('Performance history could not be reset.'); return }
+    this.announce('Performance history reset for these settings.')
+    await this.refreshHistory(config)
+  }
+
+  private syncHistorySurfaces(): void {
+    const setup = this.root.querySelector<HTMLElement>('#history-card-host')
+    if (setup) setup.innerHTML = this.renderHistoryCard()
+    const ranking = this.root.querySelector<HTMLElement>('#completion-ranking-host')
+    if (ranking && this.state.session) ranking.innerHTML = this.renderCompletionRanking(this.state.session)
+  }
+  private renderShareCard(session: TrainingSession): string {
+    const result = this.currentResult ?? createSprintResult(session)
+    if (!result) return ''
+    const payload = createSharePayload(result, canonicalAppUrl())
+    const links = createSocialShareLinks(payload)
+    return `<section class="share-card" aria-labelledby="share-heading"><p class="step-label">Celebrate your progress</p><h2 id="share-heading">Share this result</h2><p>Only your aggregate score, accuracy, skips, operations, and app link are shared.</p><div class="share-actions"><button class="button button--primary" type="button" data-action="share-result">Share</button><button class="button button--secondary" type="button" data-action="copy-result">Copy result</button></div><nav class="social-links" aria-label="Share on social networks"><a href="${escapeHtml(links.x)}" target="_blank" rel="noopener noreferrer">X<span class="sr-only"> (opens in a new tab)</span></a><a href="${escapeHtml(links.facebook)}" target="_blank" rel="noopener noreferrer">Facebook<span class="sr-only"> (opens in a new tab)</span></a><a href="${escapeHtml(links.linkedIn)}" target="_blank" rel="noopener noreferrer">LinkedIn<span class="sr-only"> (opens in a new tab)</span></a></nav><p class="field-hint">For Instagram, choose it from your device Share menu, or copy the result and paste it into a post.</p></section>`
+  }
+
+  private async shareCurrentResult(copyOnly: boolean): Promise<void> {
+    const session = this.state.session
+    const result = this.currentResult ?? (session ? createSprintResult(session) : null)
+    if (!result || this.sharePending) return
+    this.sharePending = true
+    for (const button of this.root.querySelectorAll<HTMLButtonElement>('[data-action="share-result"], [data-action="copy-result"]')) button.disabled = true
+    const payload = createSharePayload(result, canonicalAppUrl())
+    let outcome: 'shared' | 'copied' | 'cancelled' | 'unavailable'
+    try {
+      outcome = copyOnly ? await this.share.copy(payload) : await this.share.share(payload)
+    } catch {
+      outcome = 'unavailable'
+    } finally {
+      this.sharePending = false
+      for (const button of this.root.querySelectorAll<HTMLButtonElement>('[data-action="share-result"], [data-action="copy-result"]')) button.disabled = false
+    }
+    const message = outcome === 'shared' ? 'Result shared.' : outcome === 'copied' ? 'Result copied.' : outcome === 'cancelled' ? 'Sharing cancelled.' : 'Sharing is unavailable on this device.'
+    this.announce(message)
+  }
   private renderNotice(notice: Notice): string {
     return `<div class="notice notice--${notice.tone}"><span aria-hidden="true">${notice.tone === 'warning' ? '!' : 'i'}</span><p>${escapeHtml(notice.message)}</p></div>`
   }
@@ -825,10 +1073,12 @@ export class MathTrainingApp {
     if (errors.length > 0) return
 
     const session = createTrainingSession(this.state.settings, this.createSeed(), this.now())
+    this.currentResult = null
     this.state = {
       schemaVersion: APP_SCHEMA_VERSION,
       view: 'practice',
       settings: cloneConfig(this.state.settings),
+      preferences: { ...this.state.preferences },
       session,
     }
     this.notice = null
@@ -865,6 +1115,7 @@ export class MathTrainingApp {
   }
 
   private saveAndExit(): void {
+    this.suspendAudio()
     if (!this.state.session) return
     this.state = {
       ...this.state,
@@ -879,23 +1130,28 @@ export class MathTrainingApp {
           tone: 'warning',
         }
     this.render()
+    void this.refreshHistory()
     this.announce(this.notice.message)
     this.focusCurrentView()
   }
 
   private discardSession(): void {
+    this.suspendAudio()
     this.state = { ...this.state, view: 'setup', session: null }
     this.notice = { message: 'Saved session discarded. Your settings are still here.', tone: 'info' }
     this.persist(true)
     this.render()
+    void this.refreshHistory()
     this.focusCurrentView()
   }
 
   private changeSettings(): void {
+    this.suspendAudio()
     this.state = { ...this.state, view: 'setup', session: null }
     this.notice = null
     this.persist(true)
     this.render()
+    void this.refreshHistory()
     this.focusCurrentView()
   }
 
@@ -916,9 +1172,11 @@ export class MathTrainingApp {
     if (!current) return
 
     if (current.status === 'pending') {
-      const checkedSession = checkCurrentAnswer(session)
+      const checkedSession = checkCurrentAnswer(session, this.now())
       if (checkedSession === session) return
+      this.playCue('submit')
       this.state = { ...this.state, session: checkedSession }
+      this.playCue(checkedSession.progress[checkedSession.currentIndex]?.status === 'pending' ? 'incorrect' : 'correct')
       this.persist(true)
       this.render()
       const checkedProgress = checkedSession.progress[checkedSession.currentIndex]
@@ -934,19 +1192,30 @@ export class MathTrainingApp {
     }
 
     const advanced = advanceSession(session, this.now())
+    if (advanced.completedAt !== null && session.completedAt === null) this.playCue('complete')
     this.state = {
       ...this.state,
       view: advanced.completedAt === null ? 'practice' : 'complete',
       session: advanced,
     }
+    if (advanced.completedAt !== null && session.completedAt === null) {
+      this.currentResult = createSprintResult(advanced)
+      if (this.currentResult) {
+        this.historyGeneration += 1
+        this.history = { configKey: this.currentResult.configKey, status: 'loading', results: [], ranked: [], daily: [], nextCursor: null }
+      }
+    }
     this.persist(true)
     this.render()
+    if (this.currentResult && advanced.completedAt !== null && session.completedAt === null) void this.persistCompletedResult(this.currentResult)
     this.focusCurrentView()
   }
 
   private confirmReveal(): void {
     if (!this.state.session) return
-    const revealedSession = revealCurrentAnswer(this.state.session)
+    const revealedSession = revealCurrentAnswer(this.state.session, this.now())
+    if (revealedSession === this.state.session) return
+    this.playCue('reveal')
     this.state = { ...this.state, session: revealedSession }
     this.persist(true)
     this.render()
@@ -955,14 +1224,79 @@ export class MathTrainingApp {
     document.getElementById('primary-action')?.focus()
   }
 
+  private skipQuestion(): void {
+    const session = this.state.session
+    if (!session) return
+    const skipped = skipCurrentProblem(session, this.now())
+    if (skipped === session) return
+    this.state = { ...this.state, session: skipped }
+    this.playCue('skip')
+    this.persist(true)
+    this.render()
+    const isLast = skipped.currentIndex === skipped.problems.length - 1
+    this.announce(`Question skipped. 20 seconds added. ${isLast ? 'See your results.' : 'Next question.'}`)
+    document.getElementById('primary-action')?.focus()
+  }
+
+  private async enableAudio(): Promise<void> {
+    const cycle = this.audioCycle
+    const unlocked = await this.startAudioUnlock()
+    if (cycle !== this.audioCycle || !this.state.preferences.audioEnabled) return
+    if (unlocked) {
+      this.announce('Sound cues on.')
+      return
+    }
+    this.state = { ...this.state, preferences: { ...this.state.preferences, audioEnabled: false } }
+    this.notice = { message: 'Sound cues could not be enabled on this device.', tone: 'warning' }
+    this.persist(true)
+    this.render()
+    this.announce(this.notice.message)
+  }
+
+  private startAudioUnlock(): Promise<boolean> {
+    if (this.audioUnlocked) return Promise.resolve(true)
+    if (this.audioUnlockPromise) return this.audioUnlockPromise
+
+    const cycle = this.audioCycle
+    const pending = this.audio.unlockFromUserGesture().catch(() => false)
+    this.audioUnlockPromise = pending
+    void pending.then((unlocked) => {
+      if (cycle !== this.audioCycle || this.audioUnlockPromise !== pending) return
+      this.audioUnlockPromise = null
+      this.audioUnlocked = unlocked
+      const cue = this.pendingAudioCue
+      this.pendingAudioCue = null
+      if (unlocked && cue && this.state.preferences.audioEnabled) this.audio.play(cue)
+    })
+    return pending
+  }
+
+  private playCue(cue: AudioCue): void {
+    if (!this.state.preferences.audioEnabled) return
+    if (this.audioUnlocked) {
+      this.audio.play(cue)
+      return
+    }
+    this.pendingAudioCue = cue
+    void this.startAudioUnlock()
+  }
+
+  private suspendAudio(): void {
+    this.audioCycle += 1
+    this.audioUnlocked = false
+    this.audioUnlockPromise = null
+    this.pendingAudioCue = null
+    this.audio.suspend()
+  }
+
   private useKeypad(key: string, trigger: HTMLElement): void {
     if (!this.state.session) return
     if (/^\d$/.test(key)) {
-      this.updateSession((session) => appendCurrentDigit(session, key))
+      if (this.updateSession((session) => appendCurrentDigit(session, key))) this.playCue('type')
     } else if (key === 'delete') {
-      this.updateSession(deleteCurrentDigit)
+      if (this.updateSession(deleteCurrentDigit)) this.playCue('erase')
     } else if (key === 'clear') {
-      this.updateSession(clearCurrentDraft)
+      if (this.updateSession(clearCurrentDraft)) this.playCue('erase')
     }
     this.syncAnswerControls()
     this.persist()
@@ -979,15 +1313,19 @@ export class MathTrainingApp {
     this.state = { ...this.state, settings: { ...this.state.settings, problemCount: count } }
     this.persist()
     this.render()
+    void this.refreshHistory()
     window.requestAnimationFrame(() => {
       this.root.querySelector<HTMLElement>(`[data-action="question-count"][data-value="${count}"]`)?.focus()
     })
     void trigger
   }
 
-  private updateSession(update: (session: TrainingSession) => TrainingSession): void {
-    if (!this.state.session) return
-    this.state = { ...this.state, session: update(this.state.session) }
+  private updateSession(update: (session: TrainingSession) => TrainingSession): boolean {
+    if (!this.state.session) return false
+    const updated = update(this.state.session)
+    if (updated === this.state.session) return false
+    this.state = { ...this.state, session: updated }
+    return true
   }
 
   private syncAnswerControls(): void {
@@ -1023,6 +1361,11 @@ export class MathTrainingApp {
   private updateTimerText(): void {
     const timer = this.root.querySelector<HTMLElement>('#elapsed-time')
     if (timer && this.state.session) timer.textContent = formatDuration(getElapsedMs(this.state.session, this.now()))
+    const questionTimer = this.root.querySelector<HTMLElement>('#question-time')
+    if (questionTimer && this.state.session) {
+      const elapsed = getCurrentProblemElapsedMs(this.state.session, this.now())
+      questionTimer.textContent = elapsed === null ? '—' : formatDuration(elapsed)
+    }
   }
 
   private persist(force = false): boolean {
@@ -1098,6 +1441,7 @@ function createDefaultAppState(): PersistedAppState {
     schemaVersion: APP_SCHEMA_VERSION,
     view: 'setup',
     settings: cloneConfig(DEFAULT_CONFIG),
+    preferences: { ...DEFAULT_PREFERENCES },
     session: null,
   }
 }
@@ -1106,7 +1450,23 @@ function cloneConfig(config: TrainingConfig): TrainingConfig {
   return { ...config, operations: [...config.operations] }
 }
 
-function renderExpression(problem: TrainingSession['problems'][number]): string {
+function renderExpression(
+  problem: TrainingSession['problems'][number],
+  preference: 'horizontal' | 'vertical',
+): string {
+  if (effectiveOrientation(preference, problem) === 'vertical') {
+    const operation = problem.operators[0]!
+    return `
+      <div class="expression expression--vertical" role="img" aria-label="${escapeHtml(speakExpression(problem))}">
+        <span class="vertical-expression" aria-hidden="true">
+          <span>${escapeHtml(problem.operands[0] ?? '')}</span>
+          <span><b>${OPERATION_DETAILS[operation].symbol}</b>${escapeHtml(problem.operands[1] ?? '')}</span>
+          <i></i>
+        </span>
+        <span class="expression__equals" aria-hidden="true">?</span>
+      </div>
+    `
+  }
   const pieces = problem.operands
     .map((operand, index) => {
       const operation = problem.operators[index]
@@ -1132,6 +1492,9 @@ function feedbackMarkup(feedback: string, answer: string): string {
   }
   if (feedback === 'correct') {
     return '<span class="feedback-icon" aria-hidden="true">✓</span><span><strong>Correct.</strong> Nice work — keep going.</span>'
+  }
+  if (feedback === 'skipped') {
+    return '<span class="feedback-icon" aria-hidden="true">—</span><span><strong>Skipped.</strong> 20 seconds added to your scored time.</span>'
   }
   if (feedback === 'revealed') {
     return `<span class="feedback-icon" aria-hidden="true">i</span><span><strong>Answer revealed:</strong> ${escapeHtml(answer)}</span>`
@@ -1212,6 +1575,18 @@ function formatNumber(value: number): string {
 function clampInteger(value: number, minimum: number, maximum: number): number {
   if (!Number.isFinite(value)) return minimum
   return Math.min(maximum, Math.max(minimum, Math.round(value)))
+}
+
+function canonicalAppUrl(): string {
+  return PUBLIC_APP_URL
+}
+
+function formatResultDate(timestamp: number): string {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(timestamp)
+}
+
+function resolvedTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 }
 
 function checked(value: boolean): string {

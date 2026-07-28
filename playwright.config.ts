@@ -7,12 +7,12 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? 'github' : 'list',
   use: {
-    baseURL: 'http://127.0.0.1:4173/ai-math-training/',
+    baseURL: 'http://127.0.0.1:4173/mental-math-sprint/',
     trace: 'on-first-retry',
   },
   webServer: {
     command: 'npm run build && exec ./node_modules/.bin/vite preview --host 127.0.0.1 --port 4173',
-    url: 'http://127.0.0.1:4173/ai-math-training/',
+    url: 'http://127.0.0.1:4173/mental-math-sprint/',
     reuseExistingServer: false,
   },
   projects: [
