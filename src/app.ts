@@ -33,6 +33,7 @@ import { SynthAudio } from './sprint/audio'
 import { BrowserShare, createSocialShareLinks } from './sprint/share'
 import { createSharePayload, createSprintResult, dailyStatistics, rankResults, type DailyStatistics, type ResultStore, type SprintResult } from './sprint/results'
 import { IndexedDbResultStore } from './storage/result-store'
+import { icon } from './ui/icons'
 import {
   APP_SCHEMA_VERSION,
   ProgressStore,
@@ -114,6 +115,7 @@ export class MathTrainingApp {
 
     this.restore(this.store.load())
     if (this.state.session?.completedAt !== null && this.state.session) this.currentResult = createSprintResult(this.state.session)
+    this.applyAppearance()
     if (!this.announcer.isConnected) this.root.insertAdjacentElement('afterend', this.announcer)
     this.root.addEventListener('click', this.handleClick)
     this.root.addEventListener('change', this.handleChange)
@@ -148,6 +150,9 @@ export class MathTrainingApp {
     this.announcer.remove()
     this.suspendAudio()
     this.historyGeneration += 1
+    delete document.documentElement.dataset.theme
+    delete document.documentElement.dataset.density
+    delete this.root.dataset.view
     this.started = false
   }
 
@@ -205,6 +210,12 @@ export class MathTrainingApp {
       case 'change-settings':
         this.changeSettings()
         break
+      case 'cycle-theme':
+        this.setAppearance({ theme: this.state.preferences.theme === 'forest' ? 'midnight' : 'forest' })
+        break
+      case 'toggle-density':
+        this.setAppearance({ density: this.state.preferences.density === 'compact' ? 'comfortable' : 'compact' })
+        break
       case 'share-result':
         void this.shareCurrentResult(false)
         break
@@ -230,11 +241,17 @@ export class MathTrainingApp {
     if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return
     if (!target.closest('#setup-form')) return
 
-    if (target.name === 'orientation' || target.name === 'audioEnabled') {
+    if (['orientation', 'audioEnabled', 'theme', 'density'].includes(target.name)) {
       const preferences = { ...this.state.preferences }
       if (target.name === 'orientation') {
         preferences.orientation = target.value === 'vertical' ? 'vertical' : 'horizontal'
         this.announce(`${preferences.orientation === 'vertical' ? 'Vertical' : 'Horizontal'} layout selected.`)
+      } else if (target.name === 'theme') {
+        preferences.theme = target.value === 'midnight' ? 'midnight' : 'forest'
+        this.announce(`${preferences.theme === 'midnight' ? 'Midnight' : 'Forest'} theme selected.`)
+      } else if (target.name === 'density') {
+        preferences.density = target instanceof HTMLInputElement && target.checked ? 'compact' : 'comfortable'
+        this.announce(`${preferences.density === 'compact' ? 'Compact' : 'Comfortable'} layout selected.`)
       } else if (target instanceof HTMLInputElement) {
         preferences.audioEnabled = target.checked
         if (target.checked) void this.enableAudio()
@@ -244,6 +261,7 @@ export class MathTrainingApp {
         }
       }
       this.state = { ...this.state, preferences }
+      this.applyAppearance()
       this.persist(true)
       this.render()
       window.requestAnimationFrame(() => document.getElementById(target.id)?.focus())
@@ -422,6 +440,7 @@ export class MathTrainingApp {
   }
 
   private render(): void {
+    this.root.dataset.view = this.state.view
     const content =
       this.state.view === 'practice' && this.state.session
         ? this.renderPractice(this.state.session)
@@ -438,7 +457,7 @@ export class MathTrainingApp {
       ${content}
       <aside class="support-card" aria-labelledby="support-heading">
         <div><p class="step-label">Keep practice accessible</p><h2 id="support-heading">Support this free project</h2><p>Every practice feature stays free. Optional contributions help maintain and improve the app.</p></div>
-        <a class="button button--secondary" href="https://buy.stripe.com/8x200i8bSgVe3Vl3g8bfO00" target="_blank" rel="noopener noreferrer">Support via Stripe <span class="sr-only">(opens in a new tab)</span></a>
+        <a class="button button--secondary" href="https://buy.stripe.com/8x200i8bSgVe3Vl3g8bfO00" target="_blank" rel="noopener noreferrer">${icon('heart')} Support via Stripe <span class="sr-only">(opens in a new tab)</span></a>
         <small>Stripe handles payment details under its own privacy terms. No practice data is sent.</small>
       </aside>
       <footer class="site-footer">
@@ -446,6 +465,20 @@ export class MathTrainingApp {
         <a href="https://github.com/dmoliveira/mental-math-sprint" target="_blank" rel="noopener noreferrer">View source <span class="sr-only">(opens in a new tab)</span></a>
       </footer>
     `
+  }
+
+  private applyAppearance(): void {
+    document.documentElement.dataset.theme = this.state.preferences.theme
+    document.documentElement.dataset.density = this.state.preferences.density
+  }
+
+  private setAppearance(update: Partial<Pick<typeof this.state.preferences, 'theme' | 'density'>>): void {
+    this.state = { ...this.state, preferences: { ...this.state.preferences, ...update } }
+    this.applyAppearance()
+    this.persist(true)
+    this.render()
+    if (update.theme) this.announce(`${update.theme === 'midnight' ? 'Midnight' : 'Forest'} theme selected.`)
+    if (update.density) this.announce(`${update.density === 'compact' ? 'Compact' : 'Comfortable'} layout selected.`)
   }
 
   private renderHeader(): string {
@@ -471,10 +504,14 @@ export class MathTrainingApp {
             <span class="brand__name">Mental Math Sprint</span>
           </button>
           <nav class="creator-nav" aria-label="Creator links">
-            <a href="https://dmoliveira.github.io/my-cv-public/cv/human/" target="_blank" rel="noopener noreferrer">CV<span class="sr-only"> (opens in a new tab)</span></a>
-            <a href="https://github.com/dmoliveira" target="_blank" rel="noopener noreferrer">GitHub<span class="sr-only"> (opens in a new tab)</span></a>
-            <a href="https://www.linkedin.com/in/dmztheone/" target="_blank" rel="noopener noreferrer">LinkedIn<span class="sr-only"> (opens in a new tab)</span></a>
+            <a href="https://dmoliveira.github.io/my-cv-public/cv/human/" target="_blank" rel="noopener noreferrer" aria-label="Author Bio (opens in a new tab)">${icon('bio')}<span class="creator-label">Bio</span></a>
+            <a href="https://github.com/dmoliveira" target="_blank" rel="noopener noreferrer" aria-label="GitHub profile (opens in a new tab)">${icon('github')}<span class="creator-label">GitHub</span></a>
+            <a href="https://www.linkedin.com/in/dmztheone/" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn profile (opens in a new tab)">${icon('linkedin')}<span class="creator-label">LinkedIn</span></a>
           </nav>
+          <div class="appearance-actions" aria-label="Display options">
+            <button class="icon-button" type="button" data-action="cycle-theme" aria-label="Switch to ${this.state.preferences.theme === 'forest' ? 'Midnight' : 'Forest'} theme" title="Switch theme">${icon(this.state.preferences.theme === 'forest' ? 'moon' : 'sun')}</button>
+            <button class="icon-button" type="button" data-action="toggle-density" aria-label="${this.state.preferences.density === 'compact' ? 'Use comfortable layout' : 'Use compact layout'}" aria-pressed="${this.state.preferences.density === 'compact'}" title="Toggle compact layout">${icon(this.state.preferences.density === 'compact' ? 'comfortable' : 'compact')}</button>
+          </div>
           ${practiceActions}
         </div>
       </header>
@@ -494,6 +531,11 @@ export class MathTrainingApp {
           <div class="eyebrow"><span aria-hidden="true">✦</span> Your next personal best starts here</div>
           <h1 id="setup-heading" tabindex="-1">Train fast. Think clearly. Beat your best.</h1>
           <p class="lede">Configure your sprint, race the clock, and build speed one focused answer at a time.</p>
+          <div class="mascot-stage" aria-hidden="true">
+            <img class="mascot-orbit" src="${import.meta.env.BASE_URL}sprint-orbit.svg" alt="" width="1000" height="560" />
+            <img class="numi numi--hero" src="${import.meta.env.BASE_URL}numi-mascot.svg" alt="" width="320" height="320" />
+            <p><strong>Meet Numi</strong><span>Your personal-best sidekick.</span></p>
+          </div>
           <img class="hero-art" src="${import.meta.env.BASE_URL}mental-math-sprint-banner.svg" alt="" width="1600" height="560" />
           <ul class="benefit-list" aria-label="Practice benefits">
             <li><span aria-hidden="true">✓</span> Your rules, your pace</li>
@@ -592,8 +634,8 @@ export class MathTrainingApp {
             </fieldset>
 
             <fieldset class="setting-group">
-              <legend>Practice options</legend>
-              <p class="field-hint">Choose how questions look and whether optional feedback sounds play.</p>
+              <legend>Experience</legend>
+              <p class="field-hint">Choose how your sprint looks, fits, and sounds.</p>
               <div class="practice-options">
                 <div>
                   <span class="number-field__label">Problem layout</span>
@@ -603,6 +645,17 @@ export class MathTrainingApp {
                   </div>
                   <p class="selection-note">Vertical stacks one-operation questions. Chained questions stay horizontal.</p>
                 </div>
+                <div>
+                  <span class="number-field__label">Colour theme</span>
+                  <div class="theme-options">
+                    <label class="theme-choice theme-choice--forest"><input id="theme-forest" type="radio" name="theme" value="forest" ${checked(this.state.preferences.theme === 'forest')} /><span>${icon('sun')}<strong>Forest</strong><small>Bright and calm</small></span></label>
+                    <label class="theme-choice theme-choice--midnight"><input id="theme-midnight" type="radio" name="theme" value="midnight" ${checked(this.state.preferences.theme === 'midnight')} /><span>${icon('moon')}<strong>Midnight</strong><small>Dark and focused</small></span></label>
+                  </div>
+                </div>
+                <label class="sound-option" for="density-compact">
+                  <input id="density-compact" type="checkbox" name="density" ${checked(this.state.preferences.density === 'compact')} />
+                  <span><strong>${icon('compact')} Compact layout</strong><small>Fits more of the sprint on small screens.</small></span>
+                </label>
                 <label class="sound-option" for="audio-enabled">
                   <input id="audio-enabled" type="checkbox" name="audioEnabled" ${checked(this.state.preferences.audioEnabled)} />
                   <span><strong>Play sound cues</strong><small>Optional feedback sounds; every result also appears on screen.</small></span>
@@ -828,6 +881,10 @@ export class MathTrainingApp {
           </div>
 
           <div class="keypad-panel" aria-label="Number keypad">
+            <div class="mascot-coach mascot-coach--${mascotMood(progress)}" aria-hidden="true">
+              <img class="numi numi--coach" src="${import.meta.env.BASE_URL}numi-mascot.svg" alt="" width="320" height="320" />
+              <p>${escapeHtml(mascotMessage(progress))}</p>
+            </div>
             <p class="keypad-title"><span>Number pad</span><small>Optional</small></p>
             <div class="keypad-grid">
               ${['1', '2', '3', '4', '5', '6', '7', '8', '9']
@@ -876,6 +933,7 @@ export class MathTrainingApp {
             <span class="celebration__mark">✓</span>
             ${Array.from({ length: 8 }, (_, index) => `<i style="--i: ${index}"></i>`).join('')}
           </div>
+          <img class="numi numi--completion" src="${import.meta.env.BASE_URL}numi-mascot.svg" alt="" width="320" height="320" aria-hidden="true" />
           <p class="eyebrow"><span aria-hidden="true">✦</span> Session finished</p>
           <h1 id="completion-heading" tabindex="-1">${perfect ? 'Perfect run!' : 'Session complete.'}</h1>
           <p class="completion-lede">${perfect ? 'Every answer landed on the first try. Excellent focus.' : 'You showed up and worked it through. That is how fluency grows.'}</p>
@@ -1042,7 +1100,7 @@ export class MathTrainingApp {
     if (!result) return ''
     const payload = createSharePayload(result, canonicalAppUrl())
     const links = createSocialShareLinks(payload)
-    return `<section class="share-card" aria-labelledby="share-heading"><p class="step-label">Celebrate your progress</p><h2 id="share-heading">Share this result</h2><p>Only your aggregate score, accuracy, skips, operations, and app link are shared.</p><div class="share-actions"><button class="button button--primary" type="button" data-action="share-result">Share</button><button class="button button--secondary" type="button" data-action="copy-result">Copy result</button></div><nav class="social-links" aria-label="Share on social networks"><a href="${escapeHtml(links.x)}" target="_blank" rel="noopener noreferrer">X<span class="sr-only"> (opens in a new tab)</span></a><a href="${escapeHtml(links.facebook)}" target="_blank" rel="noopener noreferrer">Facebook<span class="sr-only"> (opens in a new tab)</span></a><a href="${escapeHtml(links.linkedIn)}" target="_blank" rel="noopener noreferrer">LinkedIn<span class="sr-only"> (opens in a new tab)</span></a></nav><p class="field-hint">For Instagram, choose it from your device Share menu, or copy the result and paste it into a post.</p></section>`
+    return `<section class="share-card" aria-labelledby="share-heading"><p class="step-label">Celebrate your progress</p><h2 id="share-heading">Share this result</h2><p>Only your aggregate score, accuracy, skips, operations, and app link are shared.</p><div class="share-actions"><button class="button button--primary" type="button" data-action="share-result">${icon('share')} Share</button><button class="button button--secondary" type="button" data-action="copy-result">${icon('copy')} Copy result</button></div><nav class="social-links" aria-label="Share on social networks"><a href="${escapeHtml(links.x)}" target="_blank" rel="noopener noreferrer">X<span class="sr-only"> (opens in a new tab)</span></a><a href="${escapeHtml(links.facebook)}" target="_blank" rel="noopener noreferrer">Facebook<span class="sr-only"> (opens in a new tab)</span></a><a href="${escapeHtml(links.linkedIn)}" target="_blank" rel="noopener noreferrer">LinkedIn<span class="sr-only"> (opens in a new tab)</span></a></nav><p class="field-hint">For Instagram, choose it from your device Share menu, or copy the result and paste it into a post.</p></section>`
   }
 
   private async shareCurrentResult(copyOnly: boolean): Promise<void> {
@@ -1575,6 +1633,22 @@ function formatNumber(value: number): string {
 function clampInteger(value: number, minimum: number, maximum: number): number {
   if (!Number.isFinite(value)) return minimum
   return Math.min(maximum, Math.max(minimum, Math.round(value)))
+}
+
+function mascotMood(progress: TrainingSession['progress'][number]): string {
+  if (progress.status === 'correct') return 'correct'
+  if (progress.status === 'skipped') return 'skipped'
+  if (progress.status === 'revealed') return 'revealed'
+  return progress.feedback === 'incorrect' ? 'incorrect' : 'ready'
+}
+
+function mascotMessage(progress: TrainingSession['progress'][number]): string {
+  const mood = mascotMood(progress)
+  if (mood === 'correct') return 'That clicked! Keep the streak moving.'
+  if (mood === 'incorrect') return 'Close one. Slow down, then strike again.'
+  if (mood === 'skipped') return 'Reset your rhythm. The next one is yours.'
+  if (mood === 'revealed') return 'Study the pattern, then make it yours.'
+  return 'Breathe, focus, and beat your best.'
 }
 
 function canonicalAppUrl(): string {

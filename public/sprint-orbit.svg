@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 560" aria-hidden="true">
+  <g fill="none" stroke-linecap="round">
+    <path d="M30 400C180 90 380 520 550 210S850 80 980 270" stroke="#245c4f" stroke-width="5" stroke-dasharray="2 18" opacity=".25"/>
+    <path d="M90 130c130 130 250-70 390 30s260 180 430-20" stroke="#f4b860" stroke-width="4" stroke-dasharray="20 20" opacity=".28"/>
+  </g>
+  <g font-family="ui-sans-serif,system-ui" font-weight="800" text-anchor="middle">
+    <g transform="translate(115 335) rotate(-8)"><circle r="42" fill="#fff" stroke="#245c4f" stroke-width="3"/><text y="13" font-size="38" fill="#245c4f">+</text></g>
+    <g transform="translate(760 132) rotate(10)"><rect x="-42" y="-42" width="84" height="84" rx="25" fill="#fff5df" stroke="#f4b860" stroke-width="3"/><text y="13" font-size="38" fill="#704a0b">×</text></g>
+    <g transform="translate(884 392) rotate(-6)"><circle r="36" fill="#e2f0eb" stroke="#245c4f" stroke-width="3"/><text y="11" font-size="34" fill="#245c4f">÷</text></g>
+    <g transform="translate(430 92) rotate(6)"><rect x="-32" y="-32" width="64" height="64" rx="20" fill="#fcedea" stroke="#e9785d" stroke-width="3"/><text y="10" font-size="32" fill="#9e4738">−</text></g>
+  </g>
+</svg>

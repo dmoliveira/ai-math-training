@@ -401,6 +401,26 @@ describe('MathTrainingApp lifecycle', () => {
     app.destroy()
   })
 
+  it('persists theme and compact display controls from the header', () => {
+    const store = createStore({ status: 'empty', state: null })
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store, now: () => 1_000 })
+    app.start()
+    expect(document.documentElement.dataset.theme).toBe('forest')
+    expect(document.documentElement.dataset.density).toBe('comfortable')
+    expect(root.querySelector<HTMLAnchorElement>('[aria-label^="Author Bio"]')?.textContent).toContain('Bio')
+
+    root.querySelector<HTMLButtonElement>('[data-action="cycle-theme"]')!.click()
+    expect(document.documentElement.dataset.theme).toBe('midnight')
+    root.querySelector<HTMLButtonElement>('[data-action="toggle-density"]')!.click()
+    expect(document.documentElement.dataset.density).toBe('compact')
+    expect(store.save).toHaveBeenCalled()
+
+    app.destroy()
+    expect(document.documentElement.dataset.theme).toBeUndefined()
+    expect(document.documentElement.dataset.density).toBeUndefined()
+  })
+
   it('distinguishes unavailable storage from invalid saved progress', () => {
     const root = document.querySelector<HTMLElement>('#app')!
     const unavailableStore = createStore({ status: 'unavailable', state: null })
