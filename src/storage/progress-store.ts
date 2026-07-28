@@ -50,9 +50,16 @@ export class ProgressStore {
   load(): StoreLoadResult {
     if (!this.storage) return { status: 'unavailable', state: null }
 
+    let raw: string | null
     try {
-      const raw = this.storage.getItem(STORAGE_KEY)
-      if (raw === null) return { status: 'empty', state: null }
+      raw = this.storage.getItem(STORAGE_KEY)
+    } catch {
+      return { status: 'unavailable', state: null }
+    }
+
+    if (raw === null) return { status: 'empty', state: null }
+
+    try {
       const parsed: unknown = JSON.parse(raw)
       const state = parsePersistedState(parsed)
       return state ? { status: 'ok', state } : { status: 'invalid', state: null }
@@ -113,10 +120,12 @@ function isTrainingSession(value: unknown): value is TrainingSession {
   }
   if (!value.problems.every(isProblem) || !value.progress.every(isProblemProgress)) return false
   if (!isInteger(value.currentIndex, 0) || value.currentIndex >= value.problems.length) return false
-  if (!isInteger(value.mistakes, 0) || !isFiniteNumber(value.elapsedMs) || value.elapsedMs < 0) return false
-  if (!isFiniteNumber(value.createdAt)) return false
-  if (value.timerStartedAt !== null && !isFiniteNumber(value.timerStartedAt)) return false
-  if (value.completedAt !== null && !isFiniteNumber(value.completedAt)) return false
+  if (!isInteger(value.mistakes, 0) || !isTimestamp(value.elapsedMs)) return false
+  if (!isTimestamp(value.createdAt)) return false
+  if (value.timerStartedAt !== null && !isTimestamp(value.timerStartedAt)) return false
+  if (value.completedAt !== null && !isTimestamp(value.completedAt)) return false
+  if (value.timerStartedAt !== null && value.timerStartedAt < value.createdAt) return false
+  if (value.completedAt !== null && value.completedAt < value.createdAt) return false
 
   const session = value as unknown as TrainingSession
   return hasValidProblemSequence(session) && hasConsistentProgress(session)
@@ -295,11 +304,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isInteger(value: unknown, minimum: number): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= minimum
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= minimum
 }
 
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value)
+function isTimestamp(value: unknown): value is number {
+  return isInteger(value, 0)
 }
 
 function getBrowserStorage(): StorageLike | null {

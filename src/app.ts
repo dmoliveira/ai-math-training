@@ -51,9 +51,11 @@ export class MathTrainingApp {
   private readonly store: StorePort
   private readonly now: () => number
   private readonly createSeed: () => number
+  private readonly announcer: HTMLParagraphElement
   private state: PersistedAppState
   private notice: Notice | null = null
   private timerId: number | null = null
+  private announcementTimerId: number | null = null
   private lastPersistedAt = 0
   private storageWarningShown = false
   private started = false
@@ -63,6 +65,11 @@ export class MathTrainingApp {
     this.store = dependencies.store ?? new ProgressStore()
     this.now = dependencies.now ?? Date.now
     this.createSeed = dependencies.createSeed ?? createRandomSeed
+    this.announcer = document.createElement('p')
+    this.announcer.id = 'app-announcer'
+    this.announcer.className = 'sr-only app-announcer'
+    this.announcer.setAttribute('role', 'status')
+    this.announcer.setAttribute('aria-atomic', 'true')
     this.state = createDefaultAppState()
   }
 
@@ -71,6 +78,7 @@ export class MathTrainingApp {
     this.started = true
 
     this.restore(this.store.load())
+    if (!this.announcer.isConnected) this.root.insertAdjacentElement('afterend', this.announcer)
     this.root.addEventListener('click', this.handleClick)
     this.root.addEventListener('change', this.handleChange)
     this.root.addEventListener('input', this.handleInput)
@@ -81,7 +89,7 @@ export class MathTrainingApp {
     this.timerId = window.setInterval(this.handleTimerTick, 250)
 
     this.render()
-    this.focusCurrentView()
+    if (this.state.view !== 'setup') this.focusCurrentView()
   }
 
   destroy(): void {
@@ -95,7 +103,11 @@ export class MathTrainingApp {
     document.removeEventListener('visibilitychange', this.handleVisibilityChange)
     window.removeEventListener('beforeunload', this.handleBeforeUnload)
     if (this.timerId !== null) window.clearInterval(this.timerId)
+    if (this.announcementTimerId !== null) window.clearTimeout(this.announcementTimerId)
     this.timerId = null
+    this.announcementTimerId = null
+    this.announcer.textContent = ''
+    this.announcer.remove()
     this.started = false
   }
 
@@ -139,7 +151,7 @@ export class MathTrainingApp {
         this.confirmReveal()
         break
       case 'keypad':
-        this.useKeypad(actionElement.dataset.key ?? '')
+        this.useKeypad(actionElement.dataset.key ?? '', actionElement)
         break
       case 'question-count':
         this.setQuestionCount(actionElement.dataset.value ?? '', actionElement)
@@ -162,6 +174,7 @@ export class MathTrainingApp {
 
     const next = cloneConfig(this.state.settings)
     const focusId = target.id
+    let announcement: string | null = null
 
     if (target.name === 'minDigits') {
       next.minDigits = Number(target.value)
@@ -196,11 +209,13 @@ export class MathTrainingApp {
         message: 'Mixed mode needs at least two operations and two operator positions, so Same mode is active.',
         tone: 'info',
       }
+      announcement = this.notice.message
     }
 
     this.state = { ...this.state, settings: next }
     this.persist()
     this.render()
+    if (announcement) this.announce(announcement)
     window.requestAnimationFrame(() => document.getElementById(focusId)?.focus())
   }
 
@@ -300,7 +315,7 @@ export class MathTrainingApp {
         this.state = { ...this.state, view: 'setup' }
       } else if (session.completedAt !== null) {
         this.state = { ...this.state, view: 'complete' }
-      } else if (this.state.view === 'practice') {
+      } else if (this.state.view === 'practice' && document.visibilityState === 'visible') {
         this.state = { ...this.state, session: resumeSession(session, this.now()) }
       } else if (this.state.view === 'complete') {
         this.state = { ...this.state, view: 'setup' }
@@ -332,9 +347,9 @@ export class MathTrainingApp {
           : this.renderSetup()
 
     this.root.innerHTML = `
-      <a class="skip-link" href="#main-content">Skip to practice</a>
+      <a class="skip-link" href="#main-content">Skip to main content</a>
       ${this.renderHeader()}
-      <div id="global-status" class="global-status" role="status" aria-live="polite" aria-atomic="true">
+      <div id="global-status" class="global-status">
         ${this.notice ? this.renderNotice(this.notice) : ''}
       </div>
       ${content}
@@ -349,8 +364,8 @@ export class MathTrainingApp {
     const practiceActions =
       this.state.view === 'practice'
         ? `<div class="header-actions">
-            <button class="button button--quiet button--compact" type="button" data-action="open-restart">
-              <span aria-hidden="true">↻</span> Restart
+            <button class="button button--quiet button--compact restart-action" type="button" data-action="open-restart" aria-label="Restart session">
+              <span class="restart-action__icon" aria-hidden="true">↻</span><span class="restart-action__label">Restart</span>
             </button>
             <button class="button button--secondary button--compact" type="button" data-action="save-exit">
               Save &amp; exit
@@ -544,7 +559,7 @@ export class MathTrainingApp {
   private renderExample(config: TrainingConfig, errors: string[]): string {
     if (errors.length > 0) {
       return `
-        <aside class="example-card example-card--unavailable" aria-live="polite">
+        <aside class="example-card example-card--unavailable">
           <span class="example-card__label">Live example</span>
           <strong>Adjust the highlighted setup to preview a question.</strong>
         </aside>
@@ -662,12 +677,13 @@ export class MathTrainingApp {
                   maxlength="80"
                   value="${escapeHtml(progress.draft)}"
                   aria-describedby="answer-help answer-feedback"
+                  ${progress.feedback === 'incorrect' ? 'aria-invalid="true"' : ''}
                   ${readonly(locked)}
                 />
                 ${locked ? `<span class="answer-lock" aria-label="Answer locked">${progress.status === 'correct' ? '✓' : '●'}</span>` : ''}
               </div>
               <p id="answer-help" class="answer-help">Type, use the keypad, or press <kbd>Enter</kbd> to check. <kbd>−</kbd> deletes; <kbd>×</kbd> clears.</p>
-              <div id="answer-feedback" class="answer-feedback answer-feedback--${progress.feedback}" role="status" aria-live="polite" aria-atomic="true">
+              <div id="answer-feedback" class="answer-feedback answer-feedback--${progress.feedback}">
                 ${feedbackMarkup(progress.feedback, problem.answer)}
               </div>
 
@@ -723,6 +739,7 @@ export class MathTrainingApp {
   private renderCompletion(session: TrainingSession): string {
     const summary = summarizeSession(session, this.now())
     const perfect = summary.mistakes === 0 && summary.revealed === 0
+    const review = this.renderCompletionReview(session)
 
     return `
       <main id="main-content" class="page-shell completion-page">
@@ -751,6 +768,8 @@ export class MathTrainingApp {
             </div>
           </dl>
 
+          ${review}
+
           <div class="completion-actions">
             <button class="button button--primary button--large" type="button" data-action="practice-again">Practice again <span aria-hidden="true">↻</span></button>
             <button class="button button--secondary button--large" type="button" data-action="change-settings">Change settings</button>
@@ -758,6 +777,42 @@ export class MathTrainingApp {
           <p class="completion-note"><span aria-hidden="true">🌱</span> A little consistent practice makes big numbers feel smaller.</p>
         </section>
       </main>
+    `
+  }
+
+  private renderCompletionReview(session: TrainingSession): string {
+    const reviewItems = session.progress.flatMap((progress, index) => {
+      const problem = session.problems[index]
+      if (!problem || (progress.status !== 'revealed' && progress.attempts <= 1)) return []
+      const outcome = progress.status === 'revealed' ? 'Revealed' : `${progress.attempts} attempts`
+      return [{ problem, outcome }]
+    })
+
+    if (reviewItems.length === 0) return ''
+
+    return `
+      <section class="completion-review" aria-labelledby="review-heading">
+        <div class="completion-review__heading">
+          <div>
+            <p class="step-label">Learn from the run</p>
+            <h2 id="review-heading">Review these questions</h2>
+          </div>
+          <span>${reviewItems.length} ${pluralize(reviewItems.length, 'question')}</span>
+        </div>
+        <ul class="review-list">
+          ${reviewItems
+            .map(
+              ({ problem, outcome }) => `
+                <li>
+                  <span class="review-expression" role="img" aria-label="${escapeHtml(`${speakExpression(problem)} equals ${problem.answer}`)}">
+                    <span aria-hidden="true">${escapeHtml(formatExpression(problem))} = <strong>${escapeHtml(problem.answer)}</strong></span>
+                  </span>
+                  <span class="review-outcome">${escapeHtml(outcome)}</span>
+                </li>`,
+            )
+            .join('')}
+        </ul>
+      </section>
     `
   }
 
@@ -816,9 +871,15 @@ export class MathTrainingApp {
       view: 'setup',
       session: pauseSession(this.state.session, this.now()),
     }
-    this.notice = { message: 'Session saved on this device.', tone: 'info' }
-    this.persist(true)
+    const saved = this.persist(true)
+    this.notice = saved
+      ? { message: 'Session saved on this device.', tone: 'info' }
+      : {
+          message: 'Progress cannot be saved on this device. Practice still works in this tab.',
+          tone: 'warning',
+        }
     this.render()
+    this.announce(this.notice.message)
     this.focusCurrentView()
   }
 
@@ -862,8 +923,11 @@ export class MathTrainingApp {
       this.render()
       const checkedProgress = checkedSession.progress[checkedSession.currentIndex]
       if (checkedProgress?.status === 'pending') {
+        this.announce('Incorrect. Try again.')
         this.focusAnswerInput(true)
       } else {
+        const isLast = checkedSession.currentIndex === checkedSession.problems.length - 1
+        this.announce(`Correct. ${isLast ? 'See your results.' : 'Next question.'}`)
         document.getElementById('primary-action')?.focus()
       }
       return
@@ -882,13 +946,16 @@ export class MathTrainingApp {
 
   private confirmReveal(): void {
     if (!this.state.session) return
-    this.state = { ...this.state, session: revealCurrentAnswer(this.state.session) }
+    const revealedSession = revealCurrentAnswer(this.state.session)
+    this.state = { ...this.state, session: revealedSession }
     this.persist(true)
     this.render()
+    const answer = revealedSession.problems[revealedSession.currentIndex]?.answer ?? ''
+    this.announce(`Answer revealed: ${answer}.`)
     document.getElementById('primary-action')?.focus()
   }
 
-  private useKeypad(key: string): void {
+  private useKeypad(key: string, trigger: HTMLElement): void {
     if (!this.state.session) return
     if (/^\d$/.test(key)) {
       this.updateSession((session) => appendCurrentDigit(session, key))
@@ -899,7 +966,11 @@ export class MathTrainingApp {
     }
     this.syncAnswerControls()
     this.persist()
-    this.focusAnswerInput(false)
+    if (this.hasCoarsePointer()) {
+      trigger.focus({ preventScroll: true })
+    } else {
+      this.focusAnswerInput(false)
+    }
   }
 
   private setQuestionCount(value: string, trigger: HTMLElement): void {
@@ -934,6 +1005,11 @@ export class MathTrainingApp {
     feedback.className = `answer-feedback answer-feedback--${progress.feedback}`
     feedback.innerHTML = feedbackMarkup(progress.feedback, session.problems[session.currentIndex]?.answer ?? '')
     inputWrap.classList.toggle('answer-input-wrap--error', progress.feedback === 'incorrect')
+    if (progress.feedback === 'incorrect') {
+      input.setAttribute('aria-invalid', 'true')
+    } else {
+      input.removeAttribute('aria-invalid')
+    }
   }
 
   private updateQuestionCountPresets(): void {
@@ -949,9 +1025,9 @@ export class MathTrainingApp {
     if (timer && this.state.session) timer.textContent = formatDuration(getElapsedMs(this.state.session, this.now()))
   }
 
-  private persist(force = false): void {
+  private persist(force = false): boolean {
     const now = this.now()
-    if (!force && now - this.lastPersistedAt < 250) return
+    if (!force && now - this.lastPersistedAt < 250) return true
     this.lastPersistedAt = now
 
     const saved = this.store.save(this.state, now)
@@ -963,6 +1039,7 @@ export class MathTrainingApp {
       }
       this.announce(this.notice.message)
     }
+    return saved
   }
 
   private hasActiveSession(): boolean {
@@ -980,12 +1057,15 @@ export class MathTrainingApp {
   }
 
   private focusPracticeInput(): void {
-    const coarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false
-    if (coarsePointer) {
+    if (this.hasCoarsePointer()) {
       window.requestAnimationFrame(() => document.getElementById('problem-heading')?.focus())
     } else {
       this.focusAnswerInput(false)
     }
+  }
+
+  private hasCoarsePointer(): boolean {
+    return window.matchMedia?.('(pointer: coarse)').matches ?? false
   }
 
   private focusAnswerInput(select: boolean): void {
@@ -999,17 +1079,17 @@ export class MathTrainingApp {
 
   private openDialog(id: string): void {
     const dialog = document.getElementById(id)
-    if (!(dialog instanceof HTMLDialogElement)) return
-    try {
-      dialog.showModal()
-    } catch {
-      dialog.setAttribute('open', '')
-    }
+    if (!(dialog instanceof HTMLDialogElement) || dialog.open) return
+    dialog.showModal()
   }
 
   private announce(message: string): void {
-    const status = this.root.querySelector<HTMLElement>('#global-status')
-    if (status) status.textContent = message
+    if (this.announcementTimerId !== null) window.clearTimeout(this.announcementTimerId)
+    this.announcer.textContent = ''
+    this.announcementTimerId = window.setTimeout(() => {
+      this.announcer.textContent = message
+      this.announcementTimerId = null
+    }, 0)
   }
 }
 
