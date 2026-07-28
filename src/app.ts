@@ -26,6 +26,7 @@ import {
   summarizeSession,
   type TrainingSession,
 } from './state/session'
+import { DEFAULT_PREFERENCES } from './sprint/contracts'
 import {
   APP_SCHEMA_VERSION,
   ProgressStore,
@@ -33,7 +34,7 @@ import {
   type StoreLoadResult,
 } from './storage/progress-store'
 
-type StorePort = Pick<ProgressStore, 'load' | 'save' | 'clear'>
+type StorePort = Pick<ProgressStore, 'load' | 'save' | 'clear' | 'clearAll'>
 
 export interface AppDependencies {
   store?: StorePort
@@ -324,7 +325,7 @@ export class MathTrainingApp {
     }
 
     if (result.status === 'invalid') {
-      this.store.clear()
+      this.store.clearAll()
       this.notice = {
         message: 'Your saved session could not be restored, so a fresh setup is ready.',
         tone: 'warning',
@@ -829,6 +830,7 @@ export class MathTrainingApp {
       schemaVersion: APP_SCHEMA_VERSION,
       view: 'practice',
       settings: cloneConfig(this.state.settings),
+      preferences: { ...this.state.preferences },
       session,
     }
     this.notice = null
@@ -916,7 +918,7 @@ export class MathTrainingApp {
     if (!current) return
 
     if (current.status === 'pending') {
-      const checkedSession = checkCurrentAnswer(session)
+      const checkedSession = checkCurrentAnswer(session, this.now())
       if (checkedSession === session) return
       this.state = { ...this.state, session: checkedSession }
       this.persist(true)
@@ -946,7 +948,7 @@ export class MathTrainingApp {
 
   private confirmReveal(): void {
     if (!this.state.session) return
-    const revealedSession = revealCurrentAnswer(this.state.session)
+    const revealedSession = revealCurrentAnswer(this.state.session, this.now())
     this.state = { ...this.state, session: revealedSession }
     this.persist(true)
     this.render()
@@ -1098,6 +1100,7 @@ function createDefaultAppState(): PersistedAppState {
     schemaVersion: APP_SCHEMA_VERSION,
     view: 'setup',
     settings: cloneConfig(DEFAULT_CONFIG),
+    preferences: { ...DEFAULT_PREFERENCES },
     session: null,
   }
 }

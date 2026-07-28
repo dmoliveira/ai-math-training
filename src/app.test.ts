@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MathTrainingApp } from './app'
 import { DEFAULT_CONFIG } from './math/engine'
+import { DEFAULT_PREFERENCES } from './sprint/contracts'
 import { createTrainingSession, pauseSession } from './state/session'
 import {
   APP_SCHEMA_VERSION,
@@ -16,6 +17,7 @@ const createPracticeState = (): PersistedAppState => {
     schemaVersion: APP_SCHEMA_VERSION,
     view: 'practice',
     settings: config,
+    preferences: { ...DEFAULT_PREFERENCES },
     session,
   }
 }
@@ -24,6 +26,7 @@ const createStore = (result: StoreLoadResult) => ({
   load: vi.fn(() => result),
   save: vi.fn(() => true),
   clear: vi.fn(() => true),
+  clearAll: vi.fn(() => true),
 })
 
 function setVisibility(value: DocumentVisibilityState): void {
@@ -206,7 +209,8 @@ describe('MathTrainingApp lifecycle', () => {
     const invalidApp = new MathTrainingApp(invalidRoot, { store: invalidStore, now: () => 1_000 })
     invalidApp.start()
     expect(invalidRoot.textContent).toContain('saved session could not be restored')
-    expect(invalidStore.clear).toHaveBeenCalledOnce()
+    expect(invalidStore.clearAll).toHaveBeenCalledOnce()
+    expect(invalidStore.clear).not.toHaveBeenCalled()
     invalidApp.destroy()
   })
 })
