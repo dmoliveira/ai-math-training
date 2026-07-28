@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MathTrainingApp } from './app'
 import { DEFAULT_CONFIG } from './math/engine'
 import { DEFAULT_PREFERENCES } from './sprint/contracts'
+import type { ResultPage, ResultStore } from './sprint/results'
 import { createTrainingSession, pauseSession } from './state/session'
 import {
   APP_SCHEMA_VERSION,
@@ -27,6 +28,22 @@ const createStore = (result: StoreLoadResult) => ({
   save: vi.fn(() => true),
   clear: vi.fn(() => true),
   clearAll: vi.fn(() => true),
+})
+
+const emptyResultPage = (): ResultPage => ({
+  status: 'ok',
+  results: [],
+  nextCursor: null,
+  corruptRecords: 0,
+})
+
+const createResultStore = (): ResultStore => ({
+  saveCompleted: vi.fn(async () => ({ status: 'saved' as const })),
+  getById: vi.fn(async () => null),
+  listCompleted: vi.fn(async () => emptyResultPage()),
+  listRanked: vi.fn(async () => emptyResultPage()),
+  listCompletedSince: vi.fn(async () => emptyResultPage()),
+  clearConfig: vi.fn(async () => ({ status: 'cleared' as const })),
 })
 
 function setVisibility(value: DocumentVisibilityState): void {
@@ -202,8 +219,10 @@ describe('MathTrainingApp lifecycle', () => {
       suspend: vi.fn(),
     }
     const root = document.querySelector<HTMLElement>('#app')!
+    const resultStore = createResultStore()
     const app = new MathTrainingApp(root, {
       store: createStore({ status: 'empty', state: null }),
+      resultStore,
       now: () => now,
       createSeed: () => 7,
       audio,
@@ -241,6 +260,9 @@ describe('MathTrainingApp lifecycle', () => {
     expect(root.textContent).toContain('00:23')
     expect(root.textContent).toContain('Skipped (+20s)')
     expect(audio.play).toHaveBeenCalledWith('complete')
+    await vi.waitFor(() => expect(resultStore.saveCompleted).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(root.textContent).toContain('Personal top five'))
+    expect(root.textContent).toContain('New best')
 
     app.destroy()
     expect(audio.suspend).toHaveBeenCalled()
@@ -294,6 +316,40 @@ describe('MathTrainingApp lifecycle', () => {
     await Promise.resolve()
     expect(audio.play).not.toHaveBeenCalled()
     expect(audio.suspend).toHaveBeenCalled()
+    app.destroy()
+  })
+
+  it('keeps completion usable while warning when private history cannot save', async () => {
+    const resultStore = createResultStore()
+    resultStore.saveCompleted = vi.fn(async () => ({ status: 'quota-exceeded' as const }))
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, {
+      store: createStore({ status: 'ok', state: createPracticeState() }),
+      resultStore,
+      now: () => 2_000,
+    })
+    app.start()
+    root.querySelector<HTMLButtonElement>('[data-action="skip"]')!.click()
+    root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(root.textContent).toContain('private rankings are unavailable'))
+    await vi.waitFor(() => expect(document.querySelector('#app-announcer')?.textContent).toContain('could not be saved'))
+    expect(root.textContent).toContain('Session complete.')
+    app.destroy()
+  })
+
+  it('surfaces corrupt records discovered while loading another history page', async () => {
+    const resultStore = createResultStore()
+    const listCompleted = vi.fn()
+      .mockResolvedValueOnce({ ...emptyResultPage(), nextCursor: 'next-page' })
+      .mockResolvedValueOnce({ ...emptyResultPage(), corruptRecords: 1 })
+    resultStore.listCompleted = listCompleted
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store: createStore({ status: 'empty', state: null }), resultStore, now: () => 2_000 })
+    app.start()
+    await vi.waitFor(() => expect(root.querySelector('[data-action="load-history"]')).not.toBeNull())
+    root.querySelector<HTMLButtonElement>('[data-action="load-history"]')!.click()
+    await vi.waitFor(() => expect(root.textContent).toContain('History is unavailable'))
+    expect(root.querySelector('[data-action="show-reset"]')).not.toBeNull()
     app.destroy()
   })
 

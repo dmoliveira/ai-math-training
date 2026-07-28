@@ -50,11 +50,21 @@ export interface DailyStatistics {
   medianMs: number
 }
 
+export type ResultStoreStatus =
+  | 'saved'
+  | 'duplicate'
+  | 'cleared'
+  | 'unavailable'
+  | 'blocked'
+  | 'quota-exceeded'
+  | 'failed'
+
 export interface ResultStoreWriteResult {
-  status: 'saved' | 'duplicate' | 'unavailable' | 'quota-exceeded' | 'failed'
+  status: ResultStoreStatus
 }
 
 export interface ResultPage {
+  status: 'ok' | 'unavailable' | 'blocked' | 'failed'
   results: SprintResult[]
   nextCursor: string | null
   corruptRecords: number
@@ -64,6 +74,9 @@ export interface ResultStore {
   saveCompleted(result: SprintResult): Promise<ResultStoreWriteResult>
   getById(id: string): Promise<SprintResult | null>
   listCompleted(configKey: string, cursor?: string, limit?: number): Promise<ResultPage>
+  listRanked(configKey: string, limit?: number): Promise<ResultPage>
+  listCompletedSince(configKey: string, since: number): Promise<ResultPage>
+  clearConfig(configKey: string): Promise<ResultStoreWriteResult>
 }
 
 export function createSprintResult(session: TrainingSession): SprintResult | null {
@@ -195,6 +208,45 @@ function median(sorted: readonly number[]): number {
   return sorted.length % 2 === 1
     ? sorted[middle]!
     : (sorted[middle - 1]! + sorted[middle]!) / 2
+}
+
+export function isSprintResult(value: unknown): value is SprintResult {
+  if (typeof value !== 'object' || value === null) return false
+  const result = value as Partial<SprintResult>
+  if (
+    result.schemaVersion !== 1 ||
+    typeof result.id !== 'string' ||
+    typeof result.sessionId !== 'string' ||
+    typeof result.configKey !== 'string' ||
+    !result.config ||
+    !Number.isSafeInteger(result.completedAt) ||
+    result.completedAt! < 0 ||
+    (result.timingQuality !== 'exact' && result.timingQuality !== 'legacy-partial') ||
+    typeof result.rankEligible !== 'boolean' ||
+    !result.totals ||
+    !Array.isArray(result.problems)
+  ) return false
+  const totals = result.totals
+  const numericTotals = [
+    totals.problems,
+    totals.correct,
+    totals.skipped,
+    totals.revealed,
+    totals.mistakes,
+    totals.firstTryCorrect,
+    totals.accuracyPercent,
+    totals.activeElapsedMs,
+    totals.penaltyMs,
+    totals.scoredElapsedMs,
+  ]
+  return (
+    result.id.length > 0 &&
+    result.sessionId.length > 0 &&
+    result.configKey === configKey(result.config) &&
+    numericTotals.every((item) => Number.isSafeInteger(item) && item >= 0) &&
+    totals.problems === result.problems.length &&
+    totals.scoredElapsedMs === safeAdd(totals.activeElapsedMs, totals.penaltyMs)
+  )
 }
 
 function safeAdd(left: number, right: number): number {

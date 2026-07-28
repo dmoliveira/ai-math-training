@@ -5,7 +5,15 @@ const appPath = '/ai-math-training/'
 
 test.beforeEach(async ({ page }) => {
   await page.goto(appPath)
-  await page.evaluate(() => window.localStorage.clear())
+  await page.evaluate(async () => {
+    window.localStorage.clear()
+    await new Promise<void>((resolve) => {
+      const request = window.indexedDB.deleteDatabase('mental-math-sprint-history')
+      request.onsuccess = () => resolve()
+      request.onerror = () => resolve()
+      request.onblocked = () => resolve()
+    })
+  })
   await page.reload()
 })
 
@@ -117,6 +125,18 @@ test('persists vertical practice and scores a skipped question', async ({ page }
   await expect(page.getByRole('heading', { name: 'Session complete.' })).toBeVisible()
   await expect(page.locator('.result-card').filter({ hasText: 'Scored time' })).toContainText('00:20')
   await expect(page.getByText('Skipped (+20s)')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Personal top five' })).toBeVisible()
+  await expect(page.getByText('New best')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Change settings' }).click()
+  const historyCard = page.getByRole('heading', { name: 'Performance history' }).locator('..')
+  await expect(historyCard).toContainText('Full history')
+  await expect(page.getByRole('button', { name: 'Reset this history' })).toBeEnabled()
+  await page.getByRole('button', { name: 'Reset this history' }).click()
+  const resetDialog = page.getByRole('dialog', { name: 'Reset performance history?' })
+  await resetDialog.getByRole('button', { name: 'Reset history' }).click()
+  await expect(page.locator('#app-announcer')).toHaveText('Performance history reset for these settings.')
+  await expect(page.getByText('No completed results yet.')).toBeVisible()
 })
 
 test('has no detectable WCAG A or AA violations in core views', async ({ page }) => {

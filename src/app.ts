@@ -28,8 +28,10 @@ import {
   summarizeSession,
   type TrainingSession,
 } from './state/session'
-import { DEFAULT_PREFERENCES, effectiveOrientation, type AudioCue, type AudioPort } from './sprint/contracts'
+import { DEFAULT_PREFERENCES, configKey, effectiveOrientation, type AudioCue, type AudioPort } from './sprint/contracts'
 import { SynthAudio } from './sprint/audio'
+import { createSprintResult, dailyStatistics, rankResults, type DailyStatistics, type ResultStore, type SprintResult } from './sprint/results'
+import { IndexedDbResultStore } from './storage/result-store'
 import {
   APP_SCHEMA_VERSION,
   ProgressStore,
@@ -44,11 +46,21 @@ export interface AppDependencies {
   now?: () => number
   createSeed?: () => number
   audio?: AudioPort
+  resultStore?: ResultStore
 }
 
 interface Notice {
   message: string
   tone: 'info' | 'warning'
+}
+
+interface HistoryViewState {
+  configKey: string
+  status: 'loading' | 'ok' | 'error'
+  results: SprintResult[]
+  ranked: SprintResult[]
+  daily: DailyStatistics[]
+  nextCursor: string | null
 }
 
 export class MathTrainingApp {
@@ -57,10 +69,14 @@ export class MathTrainingApp {
   private readonly now: () => number
   private readonly createSeed: () => number
   private readonly audio: AudioPort
+  private readonly resultStore: ResultStore
   private audioUnlocked = false
   private audioUnlockPromise: Promise<boolean> | null = null
   private pendingAudioCue: AudioCue | null = null
   private audioCycle = 0
+  private historyGeneration = 0
+  private history: HistoryViewState | null = null
+  private currentResult: SprintResult | null = null
   private readonly announcer: HTMLParagraphElement
   private state: PersistedAppState
   private notice: Notice | null = null
@@ -76,6 +92,7 @@ export class MathTrainingApp {
     this.now = dependencies.now ?? Date.now
     this.createSeed = dependencies.createSeed ?? createRandomSeed
     this.audio = dependencies.audio ?? new SynthAudio()
+    this.resultStore = dependencies.resultStore ?? new IndexedDbResultStore()
     this.announcer = document.createElement('p')
     this.announcer.id = 'app-announcer'
     this.announcer.className = 'sr-only app-announcer'
@@ -89,6 +106,7 @@ export class MathTrainingApp {
     this.started = true
 
     this.restore(this.store.load())
+    if (this.state.session?.completedAt !== null && this.state.session) this.currentResult = createSprintResult(this.state.session)
     if (!this.announcer.isConnected) this.root.insertAdjacentElement('afterend', this.announcer)
     this.root.addEventListener('click', this.handleClick)
     this.root.addEventListener('change', this.handleChange)
@@ -100,6 +118,8 @@ export class MathTrainingApp {
     this.timerId = window.setInterval(this.handleTimerTick, 250)
 
     this.render()
+    if (this.currentResult) void this.persistCompletedResult(this.currentResult)
+    else void this.refreshHistory()
     if (this.state.view !== 'setup') this.focusCurrentView()
   }
 
@@ -120,6 +140,7 @@ export class MathTrainingApp {
     this.announcer.textContent = ''
     this.announcer.remove()
     this.suspendAudio()
+    this.historyGeneration += 1
     this.started = false
   }
 
@@ -176,6 +197,15 @@ export class MathTrainingApp {
         break
       case 'change-settings':
         this.changeSettings()
+        break
+      case 'load-history':
+        void this.loadMoreHistory()
+        break
+      case 'show-reset':
+        this.openDialog('reset-history-dialog')
+        break
+      case 'confirm-reset-history':
+        void this.resetHistory()
         break
       default:
         break
@@ -250,6 +280,7 @@ export class MathTrainingApp {
     this.state = { ...this.state, settings: next }
     this.persist()
     this.render()
+    void this.refreshHistory()
     if (announcement) this.announce(announcement)
     window.requestAnimationFrame(() => document.getElementById(focusId)?.focus())
   }
@@ -564,6 +595,7 @@ export class MathTrainingApp {
             </button>
             <p class="keyboard-note"><span aria-hidden="true">⌨</span> Built for keyboard and number-pad practice.</p>
           </form>
+          <div id="history-card-host">${this.renderHistoryCard()}</div>
         </div>
 
         ${this.renderSetupDialogs()}
@@ -659,6 +691,15 @@ export class MathTrainingApp {
         'Keep session',
         'Discard',
         'confirm-discard',
+        true,
+      )}
+      ${dialogMarkup(
+        'reset-history-dialog',
+        'Reset performance history?',
+        'Completed results for the current arithmetic settings will be permanently deleted. Your settings and active session stay intact.',
+        'Keep history',
+        'Reset history',
+        'confirm-reset-history',
         true,
       )}
       ${dialogMarkup(
@@ -831,6 +872,7 @@ export class MathTrainingApp {
             </div>
           </dl>
 
+          <div id="completion-ranking-host">${this.renderCompletionRanking(session)}</div>
           ${review}
 
           <div class="completion-actions">
@@ -887,6 +929,90 @@ export class MathTrainingApp {
     `
   }
 
+  private renderHistoryCard(): string {
+    const key = configKey(this.state.settings)
+    const snapshot = this.history?.configKey === key ? this.history : null
+    if (!snapshot || snapshot.status === 'loading') return this.historyMessage('Loading results…')
+    if (snapshot.status === 'error') return this.historyMessage('History is unavailable. Practice still works normally.', true)
+    const rows = snapshot.results.length === 0 ? '<p>No completed results yet.</p>' : `<ol class="history-list">${snapshot.results.map((result) => `<li><time>${escapeHtml(formatResultDate(result.completedAt))}</time><strong>${formatDuration(result.totals.scoredElapsedMs)}</strong><span>${result.totals.accuracyPercent}% · ${result.totals.skipped} skipped</span></li>`).join('')}</ol>`
+    const trend = snapshot.daily.length === 0 ? '<p>Complete a session to start your seven-day trend.</p>' : `<ul class="daily-stats">${snapshot.daily.map((day) => `<li><strong>${escapeHtml(day.date)}</strong><span>Best ${formatDuration(day.bestMs)}</span><span>Average ${formatDuration(day.averageMs)}</span><span>Median ${formatDuration(day.medianMs)}</span></li>`).join('')}</ul>`
+    return `<section class="history-card" aria-labelledby="history-heading"><p class="step-label">Private on this device</p><h2 id="history-heading">Performance history</h2>${trend}<h3>Full history</h3>${rows}<div class="history-actions">${snapshot.nextCursor ? '<button class="button button--secondary" type="button" data-action="load-history">Load more</button>' : ''}<button class="button button--quiet" type="button" data-action="show-reset" ${disabled(snapshot.results.length === 0)}>Reset this history</button></div></section>`
+  }
+
+  private historyMessage(message: string, canReset = false): string {
+    return `<section class="history-card"><p class="step-label">Private on this device</p><h2>Performance history</h2><p>${escapeHtml(message)}</p>${canReset ? '<button class="button button--quiet" type="button" data-action="show-reset">Reset this history</button>' : ''}</section>`
+  }
+  private renderCompletionRanking(session: TrainingSession): string {
+    const result = this.currentResult ?? createSprintResult(session)
+    if (!result) return ''
+    const snapshot = this.history?.configKey === result.configKey ? this.history : null
+    if (!snapshot || snapshot.status === 'loading') return '<section class="ranking-card"><p>Saving your private result…</p></section>'
+    if (snapshot.status === 'error') return '<section class="ranking-card"><p>Your result is complete, but private rankings are unavailable.</p></section>'
+    const ranked = rankResults([...snapshot.ranked.filter((item) => item.id !== result.id), result], 5)
+    const isBest = result.rankEligible && ranked[0]?.id === result.id
+    return `<section class="ranking-card" aria-labelledby="ranking-heading"><div class="history-heading"><h2 id="ranking-heading">Personal top five</h2>${isBest ? '<span class="best-badge">New best</span>' : ''}</div>${result.rankEligible ? '' : '<p>Revealed-answer sessions are not ranked.</p>'}<ol>${ranked.map((item) => `<li class="${item.id === result.id ? 'ranking-current' : ''}"><span>${item.id === result.id ? 'This run' : escapeHtml(formatResultDate(item.completedAt))}</span><strong>${formatDuration(item.totals.scoredElapsedMs)}</strong><small>${item.totals.mistakes} mistakes · ${item.totals.skipped} skipped</small></li>`).join('')}</ol></section>`
+  }
+  private async persistCompletedResult(result: SprintResult): Promise<void> {
+    const generation = ++this.historyGeneration
+    const write = await this.resultStore.saveCompleted(result)
+    if (!this.started || generation !== this.historyGeneration) return
+    if (write.status !== 'saved' && write.status !== 'duplicate') {
+      this.history = { configKey: result.configKey, status: 'error', results: [], ranked: [], daily: [], nextCursor: null }
+      this.syncHistorySurfaces()
+      this.announce('This result could not be saved to private history. Your completed session is still available now.')
+      return
+    }
+    await this.refreshHistory(result.config)
+  }
+
+  private async refreshHistory(config: TrainingConfig = this.state.view === 'complete' && this.state.session ? this.state.session.config : this.state.settings): Promise<void> {
+    const key = configKey(config)
+    const generation = ++this.historyGeneration
+    this.history = { configKey: key, status: 'loading', results: [], ranked: [], daily: [], nextCursor: null }
+    this.syncHistorySurfaces()
+    const since = Math.max(0, this.now() - 7 * 24 * 60 * 60 * 1_000)
+    const [page, ranked, recent] = await Promise.all([this.resultStore.listCompleted(key, undefined, 25), this.resultStore.listRanked(key, 5), this.resultStore.listCompletedSince(key, since)])
+    if (!this.started || generation !== this.historyGeneration) return
+    const corruptRecords = page.corruptRecords + ranked.corruptRecords + recent.corruptRecords
+    if (page.status !== 'ok' || ranked.status !== 'ok' || recent.status !== 'ok' || corruptRecords > 0) {
+      this.history = { configKey: key, status: 'error', results: [], ranked: [], daily: [], nextCursor: null }
+      if (corruptRecords > 0) this.announce('Some private history data could not be read. Reset this history to remove damaged records.')
+    } else this.history = { configKey: key, status: 'ok', results: page.results, ranked: ranked.results, daily: dailyStatistics(recent.results, resolvedTimeZone()), nextCursor: page.nextCursor }
+    this.syncHistorySurfaces()
+  }
+
+  private async loadMoreHistory(): Promise<void> {
+    const snapshot = this.history
+    if (!snapshot?.nextCursor || snapshot.status !== 'ok') return
+    const generation = ++this.historyGeneration
+    const page = await this.resultStore.listCompleted(snapshot.configKey, snapshot.nextCursor, 25)
+    if (!this.started || generation !== this.historyGeneration || page.status !== 'ok') return
+    if (page.corruptRecords > 0) {
+      this.history = { configKey: snapshot.configKey, status: 'error', results: [], ranked: [], daily: [], nextCursor: null }
+      this.announce('Some private history data could not be read. Reset this history to remove damaged records.')
+      this.syncHistorySurfaces()
+      return
+    }
+    this.history = { ...snapshot, results: [...snapshot.results, ...page.results.filter((item) => !snapshot.results.some((seen) => seen.id === item.id))], nextCursor: page.nextCursor }
+    this.syncHistorySurfaces()
+  }
+
+  private async resetHistory(): Promise<void> {
+    const config = cloneConfig(this.state.settings)
+    const generation = ++this.historyGeneration
+    const result = await this.resultStore.clearConfig(configKey(config))
+    if (!this.started || generation !== this.historyGeneration) return
+    if (result.status !== 'cleared') { this.announce('Performance history could not be reset.'); return }
+    this.announce('Performance history reset for these settings.')
+    await this.refreshHistory(config)
+  }
+
+  private syncHistorySurfaces(): void {
+    const setup = this.root.querySelector<HTMLElement>('#history-card-host')
+    if (setup) setup.innerHTML = this.renderHistoryCard()
+    const ranking = this.root.querySelector<HTMLElement>('#completion-ranking-host')
+    if (ranking && this.state.session) ranking.innerHTML = this.renderCompletionRanking(this.state.session)
+  }
   private renderNotice(notice: Notice): string {
     return `<div class="notice notice--${notice.tone}"><span aria-hidden="true">${notice.tone === 'warning' ? '!' : 'i'}</span><p>${escapeHtml(notice.message)}</p></div>`
   }
@@ -896,6 +1022,7 @@ export class MathTrainingApp {
     if (errors.length > 0) return
 
     const session = createTrainingSession(this.state.settings, this.createSeed(), this.now())
+    this.currentResult = null
     this.state = {
       schemaVersion: APP_SCHEMA_VERSION,
       view: 'practice',
@@ -952,6 +1079,7 @@ export class MathTrainingApp {
           tone: 'warning',
         }
     this.render()
+    void this.refreshHistory()
     this.announce(this.notice.message)
     this.focusCurrentView()
   }
@@ -962,6 +1090,7 @@ export class MathTrainingApp {
     this.notice = { message: 'Saved session discarded. Your settings are still here.', tone: 'info' }
     this.persist(true)
     this.render()
+    void this.refreshHistory()
     this.focusCurrentView()
   }
 
@@ -971,6 +1100,7 @@ export class MathTrainingApp {
     this.notice = null
     this.persist(true)
     this.render()
+    void this.refreshHistory()
     this.focusCurrentView()
   }
 
@@ -1017,8 +1147,16 @@ export class MathTrainingApp {
       view: advanced.completedAt === null ? 'practice' : 'complete',
       session: advanced,
     }
+    if (advanced.completedAt !== null && session.completedAt === null) {
+      this.currentResult = createSprintResult(advanced)
+      if (this.currentResult) {
+        this.historyGeneration += 1
+        this.history = { configKey: this.currentResult.configKey, status: 'loading', results: [], ranked: [], daily: [], nextCursor: null }
+      }
+    }
     this.persist(true)
     this.render()
+    if (this.currentResult && advanced.completedAt !== null && session.completedAt === null) void this.persistCompletedResult(this.currentResult)
     this.focusCurrentView()
   }
 
@@ -1124,6 +1262,7 @@ export class MathTrainingApp {
     this.state = { ...this.state, settings: { ...this.state.settings, problemCount: count } }
     this.persist()
     this.render()
+    void this.refreshHistory()
     window.requestAnimationFrame(() => {
       this.root.querySelector<HTMLElement>(`[data-action="question-count"][data-value="${count}"]`)?.focus()
     })
@@ -1385,6 +1524,14 @@ function formatNumber(value: number): string {
 function clampInteger(value: number, minimum: number, maximum: number): number {
   if (!Number.isFinite(value)) return minimum
   return Math.min(maximum, Math.max(minimum, Math.round(value)))
+}
+
+function formatResultDate(timestamp: number): string {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(timestamp)
+}
+
+function resolvedTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
 }
 
 function checked(value: boolean): string {
