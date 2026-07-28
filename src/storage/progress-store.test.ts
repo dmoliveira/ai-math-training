@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { DEFAULT_CONFIG } from '../math/engine'
-import { createTrainingSession } from '../state/session'
+import { advanceSession, createTrainingSession, revealCurrentAnswer } from '../state/session'
 import {
   APP_SCHEMA_VERSION,
   ProgressStore,
@@ -105,6 +105,30 @@ describe('progress store', () => {
       if (!state.session) return
       state.session.mistakes = 3
     })
+
+    expectRejected((state) => {
+      if (!state.session) return
+      state.session.createdAt = -1
+    })
+
+    expectRejected((state) => {
+      if (!state.session) return
+      state.session.timerStartedAt = state.session.createdAt - 1
+    })
+
+    expectRejected((state) => {
+      if (!state.session) return
+      state.session.elapsedMs = Number.MAX_SAFE_INTEGER + 1
+    })
+
+    const completedState = createState()
+    if (completedState.session) {
+      completedState.session = advanceSession(revealCurrentAnswer(completedState.session), 2_000)
+      completedState.view = 'complete'
+      completedState.session.completedAt = completedState.session.createdAt - 1
+      storage.values.set(STORAGE_KEY, JSON.stringify(completedState))
+      expect(store.load()).toEqual({ status: 'invalid', state: null })
+    }
   })
 
   it('reports unavailable or throwing storage without breaking practice', () => {
@@ -125,7 +149,7 @@ describe('progress store', () => {
       },
     }
     const store = new ProgressStore(throwing)
-    expect(store.load()).toEqual({ status: 'invalid', state: null })
+    expect(store.load()).toEqual({ status: 'unavailable', state: null })
     expect(store.save(createState(), 0)).toBe(false)
     expect(store.clear()).toBe(false)
   })

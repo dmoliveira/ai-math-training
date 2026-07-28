@@ -23,7 +23,7 @@ A focused, friendly browser app for building everyday arithmetic fluency. Choose
 | ➕➖ | **Four operations** | Practise addition, subtraction, multiplication, and exact division. |
 | 🔀 | **Same or mixed** | Repeat one operation or combine selected operations with standard precedence. |
 | ⌨️ | **Keyboard first** | Use a keyboard, number pad, or the accessible on-screen keypad. |
-| ✅ | **Helpful feedback** | Retry mistakes, reveal one answer, and lock completed questions. |
+| ✅ | **Helpful feedback** | Retry mistakes, reveal one answer, and review missed questions at the end. |
 | ⏱️ | **Session results** | See active time, mistakes, and first-try accuracy. |
 | 🔒 | **Private by default** | Progress stays in versioned `localStorage`; there are no accounts, cookies, or trackers. |
 | ♿ | **Accessible and responsive** | Semantic controls, visible focus, reduced motion, and layouts tested from 320px upward. |
@@ -81,7 +81,7 @@ Open the local URL printed by Vite.
 | `npm test` | Run Vitest unit tests |
 | `npm run test:e2e` | Run Playwright browser, responsive, and accessibility tests |
 | `npm run build` | Type-check and create the production build |
-| `npm run check` | Run lint, unit tests, type-check, and build |
+| `npm run check` | Run lint, enforced test coverage, type-check, and build |
 | `make help` | Show the matching Makefile shortcuts |
 
 Install the Playwright browser once before the first end-to-end run:

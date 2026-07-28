@@ -7,7 +7,13 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
-      include: ['src/math/**/*.ts', 'src/state/**/*.ts', 'src/storage/**/*.ts'],
+      include: ['src/app.ts', 'src/math/**/*.ts', 'src/state/**/*.ts', 'src/storage/**/*.ts'],
+      thresholds: {
+        statements: 60,
+        branches: 55,
+        functions: 75,
+        lines: 65,
+      },
     },
   },
 })
