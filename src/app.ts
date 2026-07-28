@@ -871,10 +871,15 @@ export class MathTrainingApp {
       view: 'setup',
       session: pauseSession(this.state.session, this.now()),
     }
-    this.notice = { message: 'Session saved on this device.', tone: 'info' }
-    this.persist(true)
+    const saved = this.persist(true)
+    this.notice = saved
+      ? { message: 'Session saved on this device.', tone: 'info' }
+      : {
+          message: 'Progress cannot be saved on this device. Practice still works in this tab.',
+          tone: 'warning',
+        }
     this.render()
-    this.announce('Session saved on this device.')
+    this.announce(this.notice.message)
     this.focusCurrentView()
   }
 
@@ -1020,9 +1025,9 @@ export class MathTrainingApp {
     if (timer && this.state.session) timer.textContent = formatDuration(getElapsedMs(this.state.session, this.now()))
   }
 
-  private persist(force = false): void {
+  private persist(force = false): boolean {
     const now = this.now()
-    if (!force && now - this.lastPersistedAt < 250) return
+    if (!force && now - this.lastPersistedAt < 250) return true
     this.lastPersistedAt = now
 
     const saved = this.store.save(this.state, now)
@@ -1034,6 +1039,7 @@ export class MathTrainingApp {
       }
       this.announce(this.notice.message)
     }
+    return saved
   }
 
   private hasActiveSession(): boolean {

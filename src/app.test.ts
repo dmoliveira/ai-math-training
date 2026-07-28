@@ -119,6 +119,24 @@ describe('MathTrainingApp lifecycle', () => {
     app.destroy()
   })
 
+  it('does not claim save and exit succeeded when storage fails', () => {
+    const store = createStore({ status: 'ok', state: createPracticeState() })
+    store.save.mockReturnValue(false)
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store, now: () => 1_000 })
+    app.start()
+
+    root.querySelector<HTMLButtonElement>('[data-action="save-exit"]')!.click()
+    vi.advanceTimersByTime(0)
+
+    expect(root.textContent).toContain('Progress cannot be saved on this device')
+    expect(root.textContent).not.toContain('Session saved on this device')
+    expect(document.querySelector('#app-announcer')?.textContent).toBe(
+      'Progress cannot be saved on this device. Practice still works in this tab.',
+    )
+    app.destroy()
+  })
+
   it('keeps a restored hidden session paused until the document becomes visible', () => {
     let now = 1_000
     const store = createStore({ status: 'ok', state: createPracticeState() })
