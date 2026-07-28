@@ -22,6 +22,10 @@ test('completes an addition session entirely from the keyboard', async ({ page }
   await expect(setupHeading).toBeVisible()
   await expect(setupHeading).not.toBeFocused()
   await expect(page.getByRole('link', { name: 'Skip to main content' })).toHaveAttribute('href', '#main-content')
+  await expect(page.getByRole('navigation', { name: 'Creator links' })).toBeVisible()
+  const supportLink = page.getByRole('link', { name: /Support via Stripe/ })
+  await expect(supportLink).toHaveAttribute('href', 'https://buy.stripe.com/8x200i8bSgVe3Vl3g8bfO00')
+  await expect(supportLink).toHaveAttribute('rel', /noopener noreferrer/)
   await setQuestionCount(page, 1)
   await page.getByRole('button', { name: /Start practice/ }).click()
 
@@ -127,6 +131,13 @@ test('persists vertical practice and scores a skipped question', async ({ page }
   await expect(page.getByText('Skipped (+20s)')).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Personal top five' })).toBeVisible()
   await expect(page.getByText('New best')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Share this result' })).toBeVisible()
+  await expect(page.getByText(/For Instagram/)).toBeVisible()
+  for (const name of ['X', 'Facebook', 'LinkedIn']) {
+    const link = page.getByRole('link', { name: new RegExp(`^${name}`) }).last()
+    await expect(link).toHaveAttribute('target', '_blank')
+    await expect(link).toHaveAttribute('rel', /noopener noreferrer/)
+  }
 
   await page.getByRole('button', { name: 'Change settings' }).click()
   const historyCard = page.getByRole('heading', { name: 'Performance history' }).locator('..')

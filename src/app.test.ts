@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MathTrainingApp } from './app'
 import { DEFAULT_CONFIG } from './math/engine'
-import { DEFAULT_PREFERENCES } from './sprint/contracts'
+import { DEFAULT_PREFERENCES, type SharePayload } from './sprint/contracts'
 import type { ResultPage, ResultStore } from './sprint/results'
 import { createTrainingSession, pauseSession } from './state/session'
 import {
@@ -350,6 +350,36 @@ describe('MathTrainingApp lifecycle', () => {
     root.querySelector<HTMLButtonElement>('[data-action="load-history"]')!.click()
     await vi.waitFor(() => expect(root.textContent).toContain('History is unavailable'))
     expect(root.querySelector('[data-action="show-reset"]')).not.toBeNull()
+    app.destroy()
+  })
+
+  it('shares only aggregate completion data and announces share outcomes', async () => {
+    const share = { share: vi.fn(async (payload: SharePayload) => { void payload; return 'shared' as const }), copy: vi.fn(async (payload: SharePayload) => { void payload; return 'copied' as const }) }
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, {
+      store: createStore({ status: 'ok', state: createPracticeState() }),
+      resultStore: createResultStore(),
+      share,
+      now: () => 2_000,
+    })
+    app.start()
+    root.querySelector<HTMLButtonElement>('[data-action="skip"]')!.click()
+    root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    root.querySelector<HTMLButtonElement>('[data-action="share-result"]')!.click()
+    await vi.waitFor(() => expect(share.share).toHaveBeenCalledOnce())
+    const payload = share.share.mock.calls[0]![0]
+    expect(payload.text).toContain('Mental Math Sprint')
+    expect(payload.text).not.toContain('session-')
+    expect(payload.url).toBe('https://dmoliveira.github.io/ai-math-training/')
+    await vi.waitFor(() => expect(document.querySelector('#app-announcer')?.textContent).toBe('Result shared.'))
+
+    root.querySelector<HTMLButtonElement>('[data-action="copy-result"]')!.click()
+    await vi.waitFor(() => expect(share.copy).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(document.querySelector('#app-announcer')?.textContent).toBe('Result copied.'))
+    for (const link of root.querySelectorAll<HTMLAnchorElement>('.social-links a')) {
+      expect(link.rel).toContain('noopener')
+      expect(link.rel).toContain('noreferrer')
+    }
     app.destroy()
   })
 

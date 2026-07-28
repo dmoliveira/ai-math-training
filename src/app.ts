@@ -28,9 +28,10 @@ import {
   summarizeSession,
   type TrainingSession,
 } from './state/session'
-import { DEFAULT_PREFERENCES, configKey, effectiveOrientation, type AudioCue, type AudioPort } from './sprint/contracts'
+import { DEFAULT_PREFERENCES, configKey, effectiveOrientation, type AudioCue, type AudioPort, type SharePort } from './sprint/contracts'
 import { SynthAudio } from './sprint/audio'
-import { createSprintResult, dailyStatistics, rankResults, type DailyStatistics, type ResultStore, type SprintResult } from './sprint/results'
+import { BrowserShare, createSocialShareLinks } from './sprint/share'
+import { createSharePayload, createSprintResult, dailyStatistics, rankResults, type DailyStatistics, type ResultStore, type SprintResult } from './sprint/results'
 import { IndexedDbResultStore } from './storage/result-store'
 import {
   APP_SCHEMA_VERSION,
@@ -38,6 +39,8 @@ import {
   type PersistedAppState,
   type StoreLoadResult,
 } from './storage/progress-store'
+
+const PUBLIC_APP_URL = 'https://dmoliveira.github.io/ai-math-training/'
 
 type StorePort = Pick<ProgressStore, 'load' | 'save' | 'clear' | 'clearAll'>
 
@@ -47,6 +50,7 @@ export interface AppDependencies {
   createSeed?: () => number
   audio?: AudioPort
   resultStore?: ResultStore
+  share?: SharePort
 }
 
 interface Notice {
@@ -70,6 +74,7 @@ export class MathTrainingApp {
   private readonly createSeed: () => number
   private readonly audio: AudioPort
   private readonly resultStore: ResultStore
+  private readonly share: SharePort
   private audioUnlocked = false
   private audioUnlockPromise: Promise<boolean> | null = null
   private pendingAudioCue: AudioCue | null = null
@@ -77,6 +82,7 @@ export class MathTrainingApp {
   private historyGeneration = 0
   private history: HistoryViewState | null = null
   private currentResult: SprintResult | null = null
+  private sharePending = false
   private readonly announcer: HTMLParagraphElement
   private state: PersistedAppState
   private notice: Notice | null = null
@@ -93,6 +99,7 @@ export class MathTrainingApp {
     this.createSeed = dependencies.createSeed ?? createRandomSeed
     this.audio = dependencies.audio ?? new SynthAudio()
     this.resultStore = dependencies.resultStore ?? new IndexedDbResultStore()
+    this.share = dependencies.share ?? new BrowserShare()
     this.announcer = document.createElement('p')
     this.announcer.id = 'app-announcer'
     this.announcer.className = 'sr-only app-announcer'
@@ -197,6 +204,12 @@ export class MathTrainingApp {
         break
       case 'change-settings':
         this.changeSettings()
+        break
+      case 'share-result':
+        void this.shareCurrentResult(false)
+        break
+      case 'copy-result':
+        void this.shareCurrentResult(true)
         break
       case 'load-history':
         void this.loadMoreHistory()
@@ -423,9 +436,14 @@ export class MathTrainingApp {
         ${this.notice ? this.renderNotice(this.notice) : ''}
       </div>
       ${content}
+      <aside class="support-card" aria-labelledby="support-heading">
+        <div><p class="step-label">Keep practice accessible</p><h2 id="support-heading">Support this free project</h2><p>Every practice feature stays free. Optional contributions help maintain and improve the app.</p></div>
+        <a class="button button--secondary" href="https://buy.stripe.com/8x200i8bSgVe3Vl3g8bfO00" target="_blank" rel="noopener noreferrer">Support via Stripe <span class="sr-only">(opens in a new tab)</span></a>
+        <small>Stripe handles payment details under its own privacy terms. No practice data is sent.</small>
+      </aside>
       <footer class="site-footer">
-        <p><span aria-hidden="true">🔒</span> Your practice stays in this browser. No account, cookies, or tracking.</p>
-        <a href="https://github.com/dmoliveira/ai-math-training" target="_blank" rel="noreferrer">View source <span class="sr-only">(opens in a new tab)</span></a>
+        <p><span aria-hidden="true">🔒</span> Settings and completed history stay in this browser. No account or tracking.</p>
+        <a href="https://github.com/dmoliveira/ai-math-training" target="_blank" rel="noopener noreferrer">View source <span class="sr-only">(opens in a new tab)</span></a>
       </footer>
     `
   }
@@ -452,6 +470,11 @@ export class MathTrainingApp {
             </span>
             <span class="brand__name">Math Training</span>
           </button>
+          <nav class="creator-nav" aria-label="Creator links">
+            <a href="https://dmoliveira.github.io/my-cv-public/cv/human/" target="_blank" rel="noopener noreferrer">CV<span class="sr-only"> (opens in a new tab)</span></a>
+            <a href="https://github.com/dmoliveira" target="_blank" rel="noopener noreferrer">GitHub<span class="sr-only"> (opens in a new tab)</span></a>
+            <a href="https://www.linkedin.com/in/dmztheone/" target="_blank" rel="noopener noreferrer">LinkedIn<span class="sr-only"> (opens in a new tab)</span></a>
+          </nav>
           ${practiceActions}
         </div>
       </header>
@@ -874,6 +897,7 @@ export class MathTrainingApp {
 
           <div id="completion-ranking-host">${this.renderCompletionRanking(session)}</div>
           ${review}
+          ${this.renderShareCard(session)}
 
           <div class="completion-actions">
             <button class="button button--primary button--large" type="button" data-action="practice-again">Practice again <span aria-hidden="true">↻</span></button>
@@ -1012,6 +1036,33 @@ export class MathTrainingApp {
     if (setup) setup.innerHTML = this.renderHistoryCard()
     const ranking = this.root.querySelector<HTMLElement>('#completion-ranking-host')
     if (ranking && this.state.session) ranking.innerHTML = this.renderCompletionRanking(this.state.session)
+  }
+  private renderShareCard(session: TrainingSession): string {
+    const result = this.currentResult ?? createSprintResult(session)
+    if (!result) return ''
+    const payload = createSharePayload(result, canonicalAppUrl())
+    const links = createSocialShareLinks(payload)
+    return `<section class="share-card" aria-labelledby="share-heading"><p class="step-label">Celebrate your progress</p><h2 id="share-heading">Share this result</h2><p>Only your aggregate score, accuracy, skips, operations, and app link are shared.</p><div class="share-actions"><button class="button button--primary" type="button" data-action="share-result">Share</button><button class="button button--secondary" type="button" data-action="copy-result">Copy result</button></div><nav class="social-links" aria-label="Share on social networks"><a href="${escapeHtml(links.x)}" target="_blank" rel="noopener noreferrer">X<span class="sr-only"> (opens in a new tab)</span></a><a href="${escapeHtml(links.facebook)}" target="_blank" rel="noopener noreferrer">Facebook<span class="sr-only"> (opens in a new tab)</span></a><a href="${escapeHtml(links.linkedIn)}" target="_blank" rel="noopener noreferrer">LinkedIn<span class="sr-only"> (opens in a new tab)</span></a></nav><p class="field-hint">For Instagram, choose it from your device Share menu, or copy the result and paste it into a post.</p></section>`
+  }
+
+  private async shareCurrentResult(copyOnly: boolean): Promise<void> {
+    const session = this.state.session
+    const result = this.currentResult ?? (session ? createSprintResult(session) : null)
+    if (!result || this.sharePending) return
+    this.sharePending = true
+    for (const button of this.root.querySelectorAll<HTMLButtonElement>('[data-action="share-result"], [data-action="copy-result"]')) button.disabled = true
+    const payload = createSharePayload(result, canonicalAppUrl())
+    let outcome: 'shared' | 'copied' | 'cancelled' | 'unavailable'
+    try {
+      outcome = copyOnly ? await this.share.copy(payload) : await this.share.share(payload)
+    } catch {
+      outcome = 'unavailable'
+    } finally {
+      this.sharePending = false
+      for (const button of this.root.querySelectorAll<HTMLButtonElement>('[data-action="share-result"], [data-action="copy-result"]')) button.disabled = false
+    }
+    const message = outcome === 'shared' ? 'Result shared.' : outcome === 'copied' ? 'Result copied.' : outcome === 'cancelled' ? 'Sharing cancelled.' : 'Sharing is unavailable on this device.'
+    this.announce(message)
   }
   private renderNotice(notice: Notice): string {
     return `<div class="notice notice--${notice.tone}"><span aria-hidden="true">${notice.tone === 'warning' ? '!' : 'i'}</span><p>${escapeHtml(notice.message)}</p></div>`
@@ -1524,6 +1575,10 @@ function formatNumber(value: number): string {
 function clampInteger(value: number, minimum: number, maximum: number): number {
   if (!Number.isFinite(value)) return minimum
   return Math.min(maximum, Math.max(minimum, Math.round(value)))
+}
+
+function canonicalAppUrl(): string {
+  return PUBLIC_APP_URL
 }
 
 function formatResultDate(timestamp: number): string {

@@ -24,15 +24,16 @@ A focused, friendly browser app for building everyday arithmetic fluency. Choose
 | 🔀 | **Same or mixed** | Repeat one operation or combine selected operations with standard precedence. |
 | ⌨️ | **Keyboard first** | Use a keyboard, number pad, or the accessible on-screen keypad. |
 | ✅ | **Helpful feedback** | Retry mistakes, reveal one answer, and review missed questions at the end. |
-| ⏱️ | **Session results** | See active time, mistakes, and first-try accuracy. |
-| 🔒 | **Private by default** | Progress stays in versioned `localStorage`; there are no accounts, cookies, or trackers. |
+| ⏱️ | **Sprint results** | See active and scored time, skips, first-try accuracy, rankings, and seven-day trends. |
+| 🔒 | **Private by default** | Settings and active progress use versioned `localStorage`; completed history uses IndexedDB. There are no accounts or trackers. |
 | ♿ | **Accessible and responsive** | Semantic controls, visible focus, reduced motion, and layouts tested from 320px upward. |
 
 ## How to practise 🚀
 
 1. **Build a session** — choose a minimum and maximum digit count, operations, operators per question, pattern, and question total.
 2. **Solve each expression** — type an answer or use the on-screen keypad, then press <kbd>Enter</kbd>.
-3. **Review your run** — finish with first-try accuracy, mistake count, and active practice time.
+3. **Review your run** — compare scored time, top-five results, daily statistics, and private on-device history.
+4. **Share if you choose** — use native sharing, copy, or ordinary social links. Sharing never happens automatically.
 
 Your active session is restored after a refresh. **Save & exit** pauses the timer and keeps your exact place on this device.
 
@@ -96,13 +97,13 @@ npm run test:e2e
 ```text
 src/math/       deterministic BigInt exercise generation
 src/state/      session, scoring, reveal, and timer transitions
-src/storage/    validated localStorage adapter
+src/storage/    validated localStorage and IndexedDB adapters
 src/app.ts      accessible setup, practice, and completion UI
 src/style.css   responsive visual system and reduced-motion states
 e2e/            keyboard, persistence, responsive, and Axe checks
 ```
 
-The app is a dependency-light Vite + TypeScript static site. It has no backend and sends no practice data anywhere.
+The app is a dependency-light Vite + TypeScript static site. It has no backend and sends no practice data anywhere automatically. Sharing and creator/support destinations are explicit user-activated external links; Stripe handles optional payment details under its own privacy terms.
 
 ## Deployment 🌍
 

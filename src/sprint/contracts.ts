@@ -35,7 +35,8 @@ export interface SharePayload {
 }
 
 export interface SharePort {
-  share(payload: SharePayload): Promise<'shared' | 'copied' | 'unavailable'>
+  share(payload: SharePayload): Promise<'shared' | 'copied' | 'cancelled' | 'unavailable'>
+  copy(payload: SharePayload): Promise<'copied' | 'unavailable'>
 }
 
 export function configKey(config: TrainingConfig): string {
