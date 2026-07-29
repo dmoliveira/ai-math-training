@@ -1,0 +1,67 @@
+{
+  "source": {
+    "path": "artifacts/design/source/numi-soft-pebble-sheet.png",
+    "bytes": 1575083,
+    "sha256": "5d7d79d9edbfe3a0923f9396824c006859d341811be7318f1378ab1421ec340e",
+    "dimensions": [
+      1254,
+      1254
+    ],
+    "alpha": false
+  },
+  "processing": [
+    "Detected the varying opaque magenta key in a browser canvas and converted keyed pixels to alpha with soft edge decontamination.",
+    "Split the source at its exact horizontal and vertical midpoint into ready, thinking, encouraging, and celebration cells.",
+    "Computed each alpha bounding box, added 30 source-pixel padding, and square-cropped without clipping accents.",
+    "Encoded each transparent crop as 512x512 WebP using cwebp -q 84 -alpha_q 100 -m 6."
+  ],
+  "production_assets": [
+    {
+      "pose": "ready",
+      "path": "public/numi/ready.webp",
+      "bytes": 17284,
+      "sha256": "b3960fd95f5fb265dcdcaa818c04ea67c8e7184c1c44d33652b09ac0a31c428e",
+      "dimensions": [
+        512,
+        512
+      ],
+      "alpha": true
+    },
+    {
+      "pose": "thinking",
+      "path": "public/numi/thinking.webp",
+      "bytes": 17706,
+      "sha256": "edeec0bac30eb6200009574c5da0dd7a7e5adec13a14186d4e32fc31bccb5715",
+      "dimensions": [
+        512,
+        512
+      ],
+      "alpha": true
+    },
+    {
+      "pose": "encouraging",
+      "path": "public/numi/encouraging.webp",
+      "bytes": 14676,
+      "sha256": "a082b8dab62215a5723d70721031f13fbee99e3980a4ef3288ccfb89a147422d",
+      "dimensions": [
+        512,
+        512
+      ],
+      "alpha": true
+    },
+    {
+      "pose": "celebration",
+      "path": "public/numi/celebration.webp",
+      "bytes": 18776,
+      "sha256": "9d836986aa72e575e3360ab32cebc140f2264e03f5d7d43f59b42223d793805a",
+      "dimensions": [
+        512,
+        512
+      ],
+      "alpha": true
+    }
+  ],
+  "aggregate_production_bytes": 68442,
+  "intermediate_exports_committed": false,
+  "intermediate_note": "Intermediate transparent PNG crops were intentionally omitted from version control because they are deterministic derivatives and add about 1.1 MB; the untouched provider source, prompt, truthful metadata, processing recipe, hashes, and optimized production assets are retained."
+}

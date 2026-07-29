@@ -25,6 +25,7 @@ A fast, private browser game for sharpening mental arithmetic. Configure a sprin
 | ⌨️ | **Keyboard first** | Use a keyboard, number pad, or the accessible on-screen keypad. |
 | ✅ | **Helpful feedback** | Retry mistakes, reveal one answer, and review missed questions at the end. |
 | ↺ | **Mistake-to-mastery reviews** | Retry the exact questions that took extra work in a resumable, unscored review round. |
+| 🌱 | **Expressive Numi coaching** | A locally generated four-pose mascot offers warm, state-aware encouragement without replacing accessible text feedback. |
 | ⏱️ | **Sprint results** | See active and scored time, skips, first-try accuracy, rankings, and seven-day trends. |
 | 🔒 | **Private by default** | Settings and active progress use versioned `localStorage`; completed history uses IndexedDB. There are no accounts or trackers. |
 | ♿ | **Accessible and responsive** | Semantic controls, visible focus, reduced motion, and layouts tested from 320px upward. |
@@ -103,6 +104,7 @@ src/storage/    validated localStorage and IndexedDB adapters
 src/app.ts      accessible setup, practice, and completion UI
 src/style.css   responsive visual system and reduced-motion states
 e2e/            keyboard, persistence, responsive, and Axe checks
+artifacts/design/ image-generation prompt, source provenance, and processing record
 ```
 
 The app is a dependency-light Vite + TypeScript static site. It has no backend and sends no practice data anywhere automatically. Sharing and creator/support destinations are explicit user-activated external links; Stripe handles optional payment details under its own privacy terms.

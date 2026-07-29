@@ -537,10 +537,10 @@ export class MathTrainingApp {
           <div class="eyebrow"><span aria-hidden="true">✦</span> Your next personal best starts here</div>
           <h1 id="setup-heading" tabindex="-1">Train fast. Think clearly. Beat your best.</h1>
           <p class="lede">Configure your sprint, race the clock, and build speed one focused answer at a time.</p>
-          <div class="mascot-stage" aria-hidden="true">
+          <div class="mascot-stage">
             <img class="mascot-orbit" src="${import.meta.env.BASE_URL}sprint-orbit.svg" alt="" width="1000" height="560" />
-            <img class="numi numi--hero" src="${import.meta.env.BASE_URL}numi-mascot.svg" alt="" width="320" height="320" />
-            <p><strong>Meet Numi</strong><span>Your personal-best sidekick.</span></p>
+            <img class="numi numi--hero numi--pose-ready" src="${numiSrc('ready')}" alt="" width="512" height="512" aria-hidden="true" />
+            <p><strong>Hi, I’m Numi!</strong><span>We’ll make big numbers feel smaller.</span></p>
           </div>
           <img class="hero-art" src="${import.meta.env.BASE_URL}mental-math-sprint-banner.svg" alt="" width="1600" height="560" />
           <ul class="benefit-list" aria-label="Practice benefits">
@@ -808,6 +808,7 @@ export class MathTrainingApp {
     const percent = Math.round((progressValue / session.problems.length) * 100)
     const questionElapsed = getCurrentProblemElapsedMs(session, this.now())
     const reviewing = session.mode === 'review'
+    const pose = mascotPose(progress)
 
     return `
       <main id="main-content" class="page-shell practice-page">
@@ -890,9 +891,9 @@ export class MathTrainingApp {
           </div>
 
           <div class="keypad-panel" aria-label="Number keypad">
-            <div class="mascot-coach mascot-coach--${mascotMood(progress)}" aria-hidden="true">
-              <img class="numi numi--coach" src="${import.meta.env.BASE_URL}numi-mascot.svg" alt="" width="320" height="320" />
-              <p>${escapeHtml(mascotMessage(progress))}</p>
+            <div class="mascot-coach mascot-coach--${mascotMood(progress)}">
+              <img class="numi numi--coach numi--pose-${pose}" src="${numiSrc(pose)}" alt="" width="512" height="512" aria-hidden="true" />
+              <p><strong>Numi</strong><span>${escapeHtml(mascotMessage(progress, reviewing))}</span></p>
             </div>
             <p class="keypad-title"><span>Number pad</span><small>Optional</small></p>
             <div class="keypad-grid">
@@ -933,6 +934,7 @@ export class MathTrainingApp {
     if (session.mode === 'review') return this.renderReviewCompletion(session)
     const summary = summarizeSession(session, this.now())
     const perfect = summary.mistakes === 0 && summary.revealed === 0 && summary.skipped === 0
+    const completionPose: NumiPose = perfect ? 'celebration' : 'encouraging'
     const review = this.renderCompletionReview(session)
 
     return `
@@ -943,7 +945,7 @@ export class MathTrainingApp {
             <span class="celebration__mark">✓</span>
             ${Array.from({ length: 8 }, (_, index) => `<i style="--i: ${index}"></i>`).join('')}
           </div>
-          <img class="numi numi--completion" src="${import.meta.env.BASE_URL}numi-mascot.svg" alt="" width="320" height="320" aria-hidden="true" />
+          <img class="numi numi--completion numi--pose-${completionPose}" src="${numiSrc(completionPose)}" alt="" width="512" height="512" aria-hidden="true" />
           <p class="eyebrow"><span aria-hidden="true">✦</span> Session finished</p>
           <h1 id="completion-heading" tabindex="-1">${perfect ? 'Perfect run!' : 'Session complete.'}</h1>
           <p class="completion-lede">${perfect ? 'Every answer landed on the first try. Excellent focus.' : 'You showed up and worked it through. That is how fluency grows.'}</p>
@@ -983,6 +985,7 @@ export class MathTrainingApp {
     const firstTry = session.progress.filter((item) => item.status === 'correct' && item.attempts === 1).length
     const corrected = session.progress.filter((item) => item.status === 'correct' && item.attempts > 1).length
     const unresolved = session.progress.filter((item) => item.status === 'skipped' || item.status === 'revealed').length
+    const reviewPose: NumiPose = firstTry === summary.total ? 'celebration' : 'encouraging'
     const coaching = unresolved > 0
       ? `${unresolved} ${pluralize(unresolved, 'question')} still need attention. Review the answers, then try this same set once more.`
       : corrected > 0
@@ -991,7 +994,7 @@ export class MathTrainingApp {
     return `
       <main id="main-content" class="page-shell completion-page review-completion-page">
         <section class="completion-card" aria-labelledby="completion-heading">
-          <img class="numi numi--completion" src="${import.meta.env.BASE_URL}numi-mascot.svg" alt="" width="320" height="320" aria-hidden="true" />
+          <img class="numi numi--completion numi--pose-${reviewPose}" src="${numiSrc(reviewPose)}" alt="" width="512" height="512" aria-hidden="true" />
           <p class="eyebrow"><span aria-hidden="true">↺</span> Unscored mastery round</p>
           <h1 id="completion-heading" tabindex="-1">Review complete.</h1>
           <p class="completion-lede">You revisited the exact questions that slowed you down. That focused repetition is where fluency grows.</p>
@@ -1737,13 +1740,26 @@ function mascotMood(progress: TrainingSession['progress'][number]): string {
   return progress.feedback === 'incorrect' ? 'incorrect' : 'ready'
 }
 
-function mascotMessage(progress: TrainingSession['progress'][number]): string {
+type NumiPose = 'ready' | 'thinking' | 'encouraging' | 'celebration'
+
+function mascotPose(progress: TrainingSession['progress'][number]): NumiPose {
   const mood = mascotMood(progress)
-  if (mood === 'correct') return 'That clicked! Keep the streak moving.'
-  if (mood === 'incorrect') return 'Close one. Slow down, then strike again.'
-  if (mood === 'skipped') return 'Reset your rhythm. The next one is yours.'
-  if (mood === 'revealed') return 'Study the pattern, then make it yours.'
-  return 'Breathe, focus, and beat your best.'
+  if (mood === 'ready' || mood === 'revealed') return 'thinking'
+  if (mood === 'correct') return 'celebration'
+  return 'encouraging'
+}
+
+function mascotMessage(progress: TrainingSession['progress'][number], reviewing = false): string {
+  const mood = mascotMood(progress)
+  if (mood === 'correct') return reviewing ? 'Yes! That tricky pattern is becoming yours.' : 'Yes! That pattern is yours now.'
+  if (mood === 'incorrect') return 'Let’s take another look. Try one slower pass with me.'
+  if (mood === 'skipped') return 'Good reset. We’ll come back stronger.'
+  if (mood === 'revealed') return 'Notice the pattern—next time it’ll feel familiar.'
+  return reviewing ? 'We’ve seen this one before. You’ve got it.' : 'I’m right here—one step at a time.'
+}
+
+function numiSrc(pose: NumiPose): string {
+  return `${import.meta.env.BASE_URL}numi/${pose}.webp`
 }
 
 function canonicalAppUrl(): string {

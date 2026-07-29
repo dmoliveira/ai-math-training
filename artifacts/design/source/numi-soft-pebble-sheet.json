@@ -1,0 +1,32 @@
+{
+  "provider": "codex-experimental",
+  "provider_source": "arg",
+  "output_location": "explicit-output",
+  "output_location_source": "explicit-output",
+  "kind": "concept",
+  "prompt": "# Numi soft-pebble pose sheet\n\nCreate one original 2x2 character pose sheet on a fully transparent background, exactly 1024 by 1024 pixels.\n\nThe character is \u201cNumi,\u201d a cute, warm arithmetic sprite for an accessible mental-math practice app. Keep the same recognizable character in every panel: a compact rounded asymmetrical green pebble/bean body, slightly wider at the bottom, one subtly higher shoulder, short thick flexible nub arms and legs with rounded ends, a dark forest-green outline, and a bold cream-colored plus-sign belly patch integrated directly into the green torso. The cream plus is Numi\u2019s essential identifying feature and must remain large, simple, centered, and unobstructed.\n\nStyle: polished editorial vector mascot, soft geometric shape language, tactile but lightweight, two-tone green body with one broad subtle shadow, restrained paper-soft grain, crisp silhouette, consistent line weight, friendly and modern. Use wide-set dark oval eyes with tiny warm highlights, a low-set expressive mouth, subtle peach cheeks, and minimal brows. Numi feels patient, quietly playful, reassuring, emotionally safe, and remains readable at 54 pixels.\n\nPalette: main green #3D8D78, light green #62AD91, shadow green #245C4F, deep outline #173F37, cream #FFF3D5, warm cream shadow #F2D59A, face #17211B, cheeks #E99378, accent gold #F4B860.\n\nExact panel order:\n\n1. TOP LEFT \u2014 READY / WAVE: Numi upright with a gentle three-quarter lean, one arm raised in a clear wave, other arm relaxed, bright open eyes, small warm smile, one restrained gold plus-shaped spark.\n2. TOP RIGHT \u2014 THINKING / COACHING: Numi leaning slightly forward, one hand touching cheek, eyes looking upward, one softly raised brow, tiny thoughtful closed smile, at most two subtle arithmetic dots or one abstract cream curl.\n3. BOTTOM LEFT \u2014 ENCOURAGING / RECOVERY: Numi leaning supportively toward the viewer, both hands open, compassionate crescent eyes, calm smile, feet planted. The mood is \u201cyou can try again,\u201d never sad or disappointed.\n4. BOTTOM RIGHT \u2014 CELEBRATION: Numi in a compact upward hop, both arms raised, delighted open smile, slightly squinted joyful eyes, exactly three restrained cream and gold plus-shaped sparks.\n\nComposition: each pose centered consistently within its 512 by 512 cell. Keep every character and accent at least 64 pixels from cell edges. Keep face and cream plus at least 112 pixels from cell edges. Maximum character footprint 384 by 384 pixels. Align all standing-pose baselines consistently. Keep all artwork inside its own cell with complete transparency between poses. Maintain identical body proportions, colors, outline weight, belly-plus size, and facial construction across all poses.\n\nNo background, floor, shadow plate, vignette, border, panel divider, text, labels, numbers, watermark, logo, UI, props, clothing, hat, fur, photorealism, glossy 3D plastic, anime styling, thin limbs, tiny facial details, red failure symbols, tears, shaking marks, or visual clutter. Output clean transparent artwork suitable for lightweight web asset production.\n",
+  "model": "gpt-image-1",
+  "quality": "high",
+  "generated_at": "2026-07-29T07:09:40+00:00",
+  "artifact_path": "artifacts/design/source/numi-soft-pebble-sheet.png",
+  "subject": "Numi soft-pebble mascot pose sheet",
+  "goal": "Create a cute consistent four-pose production mascot system",
+  "style": "polished flat editorial vector, transparent background",
+  "notes": null,
+  "experimental": true,
+  "resolved_generated_image_selection": "single-fresh-image",
+  "codex_feature_status": "image_generation                     stable             true",
+  "requested_size": "1024x1024",
+  "source_verification": {
+    "verified_at": "2026-07-29T07:20:00+00:00",
+    "actual_pixel_dimensions": [
+      1254,
+      1254
+    ],
+    "actual_alpha": false,
+    "actual_background": "opaque varying magenta chroma key",
+    "provider_report_accurate": false,
+    "note": "The provider reported transparent 1024x1024 output, but local inspection found an opaque 1254x1254 chroma-key PNG. The original returned source is preserved unchanged; transparent production derivatives were created locally."
+  },
+  "provider_report": "Provider reported a transparent 1024x1024 pose sheet and successful chroma-key removal. Local verification below supersedes that inaccurate report."
+}
