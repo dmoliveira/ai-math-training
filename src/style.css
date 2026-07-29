@@ -1080,6 +1080,20 @@
     box-shadow: var(--shadow-sm);
   }
 
+  .review-mode-badge {
+    grid-column: 1 / -1;
+    width: fit-content;
+    padding: 6px 10px;
+    border: 1px solid var(--primary);
+    border-radius: 999px;
+    background: var(--primary-pale);
+    color: var(--primary);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
   .progress-copy {
     display: grid;
     grid-template-columns: auto 1fr;
@@ -1572,6 +1586,10 @@
     text-align: left;
   }
 
+  .results-grid--review {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
   .result-card {
     display: flex;
     min-width: 0;
@@ -1628,6 +1646,30 @@
     border-radius: 17px;
     background: var(--primary-pale);
     text-align: left;
+  }
+
+  .training-insight {
+    margin-top: 24px;
+    padding: 20px 22px;
+    border: 1px solid var(--border-strong);
+    border-radius: 17px;
+    background: linear-gradient(135deg, var(--surface-muted), var(--surface));
+    text-align: left;
+  }
+
+  .training-insight h2 {
+    margin-top: 2px;
+    font-size: 1.2rem;
+  }
+
+  .training-insight p:last-child {
+    margin-top: 8px;
+    color: var(--muted);
+  }
+
+  .training-insight--review {
+    border-color: var(--primary);
+    background: var(--primary-pale);
   }
 
   .completion-review__heading {
@@ -1688,6 +1730,10 @@
     color: var(--muted);
     font-size: 0.72rem;
     font-weight: 720;
+  }
+
+  .completion-review > .button {
+    margin-top: 18px;
   }
 
   .completion-actions {
@@ -2238,6 +2284,31 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.history-scope {
+  display: grid;
+  gap: 4px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-muted);
+}
+
+.history-scope strong {
+  color: var(--primary);
+  font-size: .72rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.history-scope span {
+  font-weight: 720;
+}
+
+.history-scope small {
+  color: var(--muted);
 }
 
 .history-heading > span,
@@ -2962,7 +3033,7 @@
     padding: 16px 13px 20px;
   }
 
-  :root[data-density="compact"] #app[data-view="practice"] .support-card {
+  #app[data-view="practice"] .support-card {
     display: none;
   }
 

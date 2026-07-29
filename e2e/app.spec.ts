@@ -152,6 +152,71 @@ test('persists vertical practice and scores a skipped question', async ({ page }
   await expect(page.getByText('No completed results yet.')).toBeVisible()
 })
 
+test('retries the exact difficult set in a resumable unscored mastery review', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 568 })
+  await setQuestionCount(page, 3)
+  await page.getByRole('button', { name: /Start sprint/ }).click()
+  const sourceExpressions: string[] = []
+
+  const first = await currentAddition(page)
+  sourceExpressions.push(first.label)
+  await page.getByLabel('Your answer').fill(String(first.answer + 1))
+  await page.getByLabel('Your answer').press('Enter')
+  await page.getByLabel('Your answer').fill(String(first.answer))
+  await page.getByLabel('Your answer').press('Enter')
+  await page.getByRole('button', { name: 'Next question' }).click()
+
+  sourceExpressions.push((await currentAddition(page)).label)
+  await page.getByRole('button', { name: 'Skip question (+20s)' }).click()
+  await page.getByRole('button', { name: 'Next question' }).click()
+
+  sourceExpressions.push((await currentAddition(page)).label)
+  await page.getByRole('button', { name: 'Reveal answer' }).click()
+  await page.getByRole('dialog', { name: 'Reveal this answer?' }).getByRole('button', { name: 'Reveal answer' }).click()
+  await page.getByRole('button', { name: 'See results' }).click()
+
+  await expect(page.locator('.review-list li')).toHaveCount(3)
+  await expect(page.getByRole('button', { name: /Practice these exact questions/ })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Turn effort into mastery' })).toBeVisible()
+  await expect(page.getByText(/Exact setup/)).toHaveCount(0)
+  expect(await indexedResultCount(page)).toBe(1)
+
+  await page.getByRole('button', { name: /Practice these exact questions/ }).click()
+  await expect(page.getByText(/Mistake-to-mastery review/)).toBeVisible()
+  await expect(page.locator('.support-card')).toBeHidden()
+  await expect(page.locator('.expression')).toHaveAttribute('aria-label', sourceExpressions[0]!)
+  await expect(page.getByRole('button', { name: 'Skip question' })).toBeVisible()
+  await expectAccessible(page, 'review practice')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320)
+
+  await page.getByRole('button', { name: 'Skip question' }).click()
+  await expect(page.locator('#answer-feedback')).toContainText('Keep it in your next review round')
+  await page.getByRole('button', { name: 'Save & exit' }).click()
+  await page.reload()
+  await expect(page.getByRole('heading', { name: 'Continue your review' })).toBeVisible()
+  await page.getByRole('button', { name: 'Resume' }).click()
+  await expect(page.locator('.expression')).toHaveAttribute('aria-label', sourceExpressions[0]!)
+  await page.getByRole('button', { name: 'Next question' }).click()
+
+  for (let index = 1; index < sourceExpressions.length; index += 1) {
+    await expect(page.locator('.expression')).toHaveAttribute('aria-label', sourceExpressions[index]!)
+    await page.getByRole('button', { name: 'Skip question' }).click()
+    await page.getByRole('button', { name: index === sourceExpressions.length - 1 ? 'Finish review' : 'Next question' }).click()
+  }
+
+  await expect(page.getByRole('heading', { name: 'Review complete.' })).toBeVisible()
+  await expect(page.getByText('Unscored mastery round')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Personal top five' })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Share this result' })).toHaveCount(0)
+  await expect(page.getByText(/never affect rankings or history/)).toBeVisible()
+  await expectAccessible(page, 'review completion')
+  expect(await indexedResultCount(page)).toBe(1)
+
+  await page.getByRole('button', { name: 'Start another sprint' }).click()
+  await expect(page.locator('.history-scope')).toContainText('Exact setup')
+  await expect(page.locator('.history-scope')).toContainText('3 questions')
+})
+
 test('has no detectable WCAG A or AA violations in core views', async ({ page }) => {
   await expectAccessible(page, 'setup')
 
@@ -345,4 +410,32 @@ async function expectAccessible(page: Page, view: string): Promise<void> {
     })),
     `${view} accessibility violations`,
   ).toEqual([])
+}
+
+async function currentAddition(page: Page): Promise<{ label: string; answer: number }> {
+  const expression = page.locator('.expression')
+  const label = await expression.getAttribute('aria-label')
+  const operands = (await expression.innerText()).match(/\d+/g)?.map(Number) ?? []
+  expect(label).not.toBeNull()
+  expect(operands).toHaveLength(2)
+  return { label: label!, answer: operands[0]! + operands[1]! }
+}
+
+async function indexedResultCount(page: Page): Promise<number> {
+  return page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('mental-math-sprint-history')
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    try {
+      return await new Promise<number>((resolve, reject) => {
+        const request = database.transaction('results', 'readonly').objectStore('results').count()
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+    } finally {
+      database.close()
+    }
+  })
 }

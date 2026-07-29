@@ -160,14 +160,15 @@ export function parsePersistedState(value: unknown): PersistedAppState | null {
   if (!isAppView(value.view) || !isTrainingConfig(value.settings)) return null
   const preferences = parsePracticePreferences(value.preferences)
   if (!preferences) return null
-  if (value.session !== null && !isTrainingSession(value.session)) return null
+  const session = value.session === null ? null : normalizeTrainingSession(value.session)
+  if (value.session !== null && !session) return null
 
   return {
     schemaVersion: APP_SCHEMA_VERSION,
     view: value.view,
     settings: cloneConfig(value.settings),
     preferences,
-    session: value.session ? cloneSessionAsPaused(value.session) : null,
+    session: session ? cloneSessionAsPaused(session) : null,
   }
 }
 
@@ -194,6 +195,7 @@ function migrateLegacyState(value: LegacyPersistedAppState): PersistedAppState {
     session: session
       ? {
           schemaVersion: SESSION_SCHEMA_VERSION,
+          mode: 'sprint',
           id: `legacy-${session.createdAt}-${session.seed}`,
           config: cloneConfig(session.config),
           seed: session.seed,
@@ -226,6 +228,7 @@ function parseLoadResult<T>(
 
 function isTrainingSession(value: unknown): value is TrainingSession {
   if (!isRecord(value) || value.schemaVersion !== SESSION_SCHEMA_VERSION) return false
+  if (value.mode !== 'sprint' && value.mode !== 'review') return false
   if (typeof value.id !== 'string' || value.id.length === 0 || !isTrainingConfig(value.config)) return false
   if (!isInteger(value.seed, 0) || !Array.isArray(value.problems) || !Array.isArray(value.progress)) return false
   if (value.problems.length !== value.config.problemCount || value.progress.length !== value.problems.length) return false
@@ -250,6 +253,14 @@ function isTrainingSession(value: unknown): value is TrainingSession {
     if (problemTime !== session.elapsedMs) return false
   }
   return true
+}
+
+function normalizeTrainingSession(value: unknown): TrainingSession | null {
+  if (!isRecord(value)) return null
+  const mode = value.mode === undefined ? 'sprint' : value.mode
+  if (mode !== 'sprint' && mode !== 'review') return null
+  const normalized = { ...value, mode }
+  return isTrainingSession(normalized) ? normalized : null
 }
 
 function isLegacyTrainingSession(value: unknown): value is LegacyTrainingSession {

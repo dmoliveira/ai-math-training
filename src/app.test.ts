@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MathTrainingApp } from './app'
 import { DEFAULT_CONFIG } from './math/engine'
 import { DEFAULT_PREFERENCES, type SharePayload } from './sprint/contracts'
-import type { ResultPage, ResultStore } from './sprint/results'
-import { createTrainingSession, pauseSession } from './state/session'
+import type { ResultPage, ResultStore, ResultStoreWriteResult } from './sprint/results'
+import { advanceSession, createReviewSession, createTrainingSession, pauseSession, skipCurrentProblem } from './state/session'
 import {
   APP_SCHEMA_VERSION,
   type PersistedAppState,
@@ -266,6 +266,102 @@ describe('MathTrainingApp lifecycle', () => {
 
     app.destroy()
     expect(audio.suspend).toHaveBeenCalled()
+  })
+
+  it('turns difficult sprint questions into an exact unscored review without history leakage', async () => {
+    const state = createPracticeState()
+    const answer = state.session!.problems[0]!.answer
+    const root = document.querySelector<HTMLElement>('#app')!
+    const resultStore = createResultStore()
+    const app = new MathTrainingApp(root, {
+      store: createStore({ status: 'ok', state }), resultStore, now: () => 2_000,
+    })
+    app.start()
+
+    const input = root.querySelector<HTMLInputElement>('#answer-input')!
+    input.value = String(BigInt(answer) + 1n)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    root.querySelector<HTMLInputElement>('#answer-input')!.value = answer
+    root.querySelector<HTMLInputElement>('#answer-input')!.dispatchEvent(new Event('input', { bubbles: true }))
+    root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() => expect(resultStore.saveCompleted).toHaveBeenCalledOnce())
+    expect(root.textContent).toContain('Practice these exact questions')
+    expect(root.textContent).toContain('Training insight')
+    const rankingCalls = vi.mocked(resultStore.listRanked).mock.calls.length
+    const originalExpression = root.querySelector('.review-expression')?.getAttribute('aria-label')?.split(' equals ')[0]
+    root.querySelector<HTMLButtonElement>('[data-action="start-review"]')!.click()
+    expect(root.querySelector('.review-mode-badge')?.textContent).toContain('Unscored')
+    expect(root.querySelector('.expression')?.getAttribute('aria-label')).toBe(originalExpression)
+    expect(root.querySelector('.share-card')).toBeNull()
+
+    root.querySelector<HTMLButtonElement>('[data-action="skip"]')!.click()
+    expect(root.textContent).toContain('Keep it in your next review round')
+    expect(root.textContent).not.toContain('20 seconds added to your scored time')
+    root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    expect(root.textContent).toContain('Review complete.')
+    expect(root.textContent).toContain('Review rounds stay resumable')
+    expect(root.querySelector('.ranking-card')).toBeNull()
+    expect(root.querySelector('.share-card')).toBeNull()
+    expect(resultStore.saveCompleted).toHaveBeenCalledOnce()
+    expect(vi.mocked(resultStore.listRanked).mock.calls.length).toBe(rankingCalls)
+
+    root.querySelector<HTMLButtonElement>('[data-action="practice-again"]')!.click()
+    expect(root.querySelector('.expression')?.getAttribute('aria-label')).toBe(originalExpression)
+    expect(root.querySelector('.review-mode-badge')).not.toBeNull()
+    app.destroy()
+  })
+
+  it('restores incomplete and completed reviews without projecting scored results', () => {
+    const makeReviewState = (complete: boolean): PersistedAppState => {
+      let source = createTrainingSession({ ...DEFAULT_CONFIG, problemCount: 1 }, 42, 1_000)
+      source = skipCurrentProblem(source, 1_100)
+      let review = createReviewSession(source, 2_000)!
+      if (complete) review = advanceSession(skipCurrentProblem(review, 2_100), 2_200)
+      else review = pauseSession(review, 2_100)
+      return { ...createPracticeState(), view: complete ? 'complete' : 'practice', session: review }
+    }
+
+    for (const complete of [false, true]) {
+      document.body.innerHTML = '<div id="app"></div>'
+      const resultStore = createResultStore()
+      const root = document.querySelector<HTMLElement>('#app')!
+      const app = new MathTrainingApp(root, { store: createStore({ status: 'ok', state: makeReviewState(complete) }), resultStore, now: () => 3_000 })
+      app.start()
+      expect(root.textContent).toContain(complete ? 'Review complete.' : 'Mistake-to-mastery review')
+      expect(resultStore.saveCompleted).not.toHaveBeenCalled()
+      expect(resultStore.listRanked).not.toHaveBeenCalled()
+      expect(resultStore.listCompleted).not.toHaveBeenCalled()
+      app.destroy()
+    }
+  })
+
+  it('announces a delayed sprint-history failure after focused review has started', async () => {
+    const state = createPracticeState()
+    const answer = state.session!.problems[0]!.answer
+    let resolveSave: (value: ResultStoreWriteResult) => void = () => undefined
+    const resultStore = createResultStore()
+    resultStore.saveCompleted = vi.fn(() => new Promise<ResultStoreWriteResult>((resolve) => { resolveSave = resolve }))
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store: createStore({ status: 'ok', state }), resultStore, now: () => 2_000 })
+    app.start()
+
+    const input = root.querySelector<HTMLInputElement>('#answer-input')!
+    input.value = String(BigInt(answer) + 1n)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    root.querySelector<HTMLInputElement>('#answer-input')!.value = answer
+    root.querySelector<HTMLInputElement>('#answer-input')!.dispatchEvent(new Event('input', { bubbles: true }))
+    root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    root.querySelector<HTMLButtonElement>('[data-action="start-review"]')!.click()
+
+    resolveSave({ status: 'quota-exceeded' })
+    await vi.waitFor(() => expect(document.querySelector('#app-announcer')?.textContent).toContain('could not be saved'))
+    expect(root.querySelector('.review-mode-badge')).not.toBeNull()
+    app.destroy()
   })
 
   it('unlocks a restored sound preference before playing its first action cue', async () => {
