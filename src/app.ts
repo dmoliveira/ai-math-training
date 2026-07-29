@@ -310,6 +310,18 @@ export class MathTrainingApp {
       return
     }
 
+    if (target.name === 'problemCount') {
+      const value = Number(target.value)
+      if (!Number.isInteger(value) || value < 1 || value > 50) return
+      this.state = { ...this.state, settings: { ...this.state.settings, problemCount: value } }
+      this.persist()
+      this.updateQuestionCountPresets()
+      this.updatePracticePresetSelection()
+      this.updateSetupExample()
+      void this.refreshHistory(this.state.settings)
+      return
+    }
+
     const next = cloneConfig(this.state.settings)
     const focusId = target.id
     let announcement: string | null = null
@@ -335,8 +347,6 @@ export class MathTrainingApp {
       } else {
         next.operations = next.operations.filter((item) => item !== operation)
       }
-    } else if (target.name === 'problemCount') {
-      next.problemCount = clampInteger(Number(target.value), 1, 50)
     } else if (target.name === 'challenge') {
       next.challenge = parseChallengeLevel(target.value)
     } else {
@@ -387,6 +397,7 @@ export class MathTrainingApp {
         this.persist()
         this.updateQuestionCountPresets()
         this.updatePracticePresetSelection()
+        this.updateSetupExample()
         void this.refreshHistory(this.state.settings)
       }
     }
@@ -735,7 +746,7 @@ export class MathTrainingApp {
               </div>
             </fieldset>
 
-            ${example}
+            <div id="setup-example-host">${example}</div>
             ${errors.length > 0 ? this.renderConfigErrors(errors) : ''}
 
             <button class="button button--primary button--large" type="submit" ${disabled(errors.length > 0)}>
@@ -1695,9 +1706,16 @@ export class MathTrainingApp {
       const active = button.dataset.preset === selectedPreset
       button.classList.toggle('practice-preset--active', active)
       button.setAttribute('aria-pressed', String(active))
+      const action = button.querySelector<HTMLElement>('b')
+      if (action) action.textContent = active ? 'Selected · Start →' : 'Start challenge →'
     }
     const state = this.root.querySelector<HTMLElement>('.preset-state')
     if (state) state.textContent = selectedPreset === 'custom' ? 'Custom setup' : 'Preset selected'
+  }
+
+  private updateSetupExample(): void {
+    const host = this.root.querySelector<HTMLElement>('#setup-example-host')
+    if (host) host.innerHTML = this.renderExample(this.state.settings, validateConfig(this.state.settings))
   }
 
   private updateTimerText(): void {
@@ -1938,11 +1956,6 @@ function challengeDescription(challenge: ChallengeLevel): string {
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat('en-US').format(value)
-}
-
-function clampInteger(value: number, minimum: number, maximum: number): number {
-  if (!Number.isFinite(value)) return minimum
-  return Math.min(maximum, Math.max(minimum, Math.round(value)))
 }
 
 function completionPercent(session: TrainingSession | null): number {
