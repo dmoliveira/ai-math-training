@@ -28,6 +28,7 @@ test('completes an addition session entirely from the keyboard', async ({ page }
   const supportLink = page.getByRole('link', { name: /Support via Stripe/ })
   await expect(supportLink).toHaveAttribute('href', 'https://buy.stripe.com/8x200i8bSgVe3Vl3g8bfO00')
   await expect(supportLink).toHaveAttribute('rel', /noopener noreferrer/)
+  await page.locator('#auto-advance').uncheck()
   await setQuestionCount(page, 1)
   await page.getByRole('button', { name: /Start sprint/ }).click()
   await expect(page.locator('.numi--pose-thinking')).toHaveAttribute('src', /numi\/thinking\.webp$/)
@@ -46,9 +47,10 @@ test('completes an addition session entirely from the keyboard', async ({ page }
   expect(await page.locator('.answer-feedback').evaluate((element) => getComputedStyle(element).animationName)).toBe('feedback-arrive')
   expect(await page.locator('.progress-track span').evaluate((element) => getComputedStyle(element).animationName)).toBe('progress-earned')
   await expectAccessible(page, 'correct answer')
-  await expect(page.locator('#app-announcer')).toHaveText('Correct. Moving to the next question.')
+  await expect(page.locator('#app-announcer')).toHaveText('Correct. See your results.')
   await expect(input).toHaveAttribute('readonly', '')
 
+  await page.keyboard.press('Enter')
   await expect(page.getByRole('heading', { name: 'Perfect run!' })).toBeVisible()
   await expect(page.locator('#app')).toHaveAttribute('data-motion', 'completion-enter')
   expect(await page.locator('.completion-card').evaluate((element) => getComputedStyle(element).animationName)).toBe('completion-fade')
@@ -66,6 +68,18 @@ test('completes an addition session entirely from the keyboard', async ({ page }
   await expect(page.getByText(/100% first-try accuracy/)).toBeVisible()
   await page.getByRole('button', { name: /Start this setup/ }).click()
   await expect(page.getByLabel('Your answer')).toBeFocused()
+})
+
+test('moves to the next question automatically after correct feedback', async ({ page }) => {
+  await setQuestionCount(page, 1)
+  await page.getByRole('button', { name: /Start sprint/ }).click()
+  await expect(page.locator('.auto-next-toggle')).toHaveAttribute('aria-pressed', 'true')
+  const expression = await page.locator('.expression__pieces').innerText()
+  const operands = expression.match(/\d+/g)?.map(Number) ?? []
+  await page.getByLabel('Your answer').fill(String((operands[0] ?? 0) + (operands[1] ?? 0)))
+  await page.getByLabel('Your answer').press('Enter')
+  await expect(page.locator('#app-announcer')).toHaveText('Correct. Moving to the next question.')
+  await expect(page.getByRole('heading', { name: 'Perfect run!' })).toBeVisible()
 })
 
 test('offers accessible one-click challenges without mobile overflow', async ({ page }) => {
