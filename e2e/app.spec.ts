@@ -18,16 +18,39 @@ test.beforeEach(async ({ page }) => {
   await page.reload()
 })
 
+test('navigates Practice and Progress with keyboard-friendly disclosures', async ({ page }) => {
+  const progress = page.getByRole('button', { name: 'Progress', exact: true })
+  await progress.focus()
+  await progress.press('Enter')
+  await expect(page.getByRole('heading', { name: 'See what your practice is building.' })).toBeFocused()
+  await expect(progress).toHaveAttribute('aria-current', 'page')
+  await expectAccessible(page, 'progress')
+
+  const practice = page.getByRole('button', { name: 'Practice', exact: true })
+  await practice.press('Enter')
+  await expect(page.getByRole('heading', { name: 'Start a sprint in seconds.' })).toBeFocused()
+  const summary = page.locator('#customize-setup > summary')
+  await summary.focus()
+  await summary.press('Enter')
+  await expect(page.locator('#customize-setup')).toHaveAttribute('open', '')
+  const maxDigits = page.locator('#maxDigits')
+  await maxDigits.selectOption('4')
+  await expect(page.locator('#customize-setup')).toHaveAttribute('open', '')
+  await expect(maxDigits).toBeFocused()
+})
+
 test('completes an addition session entirely from the keyboard', async ({ page }) => {
-  const setupHeading = page.getByRole('heading', { name: 'Train fast. Think clearly. Beat your best.' })
+  const setupHeading = page.getByRole('heading', { name: 'Start a sprint in seconds.' })
   await expect(setupHeading).toBeVisible()
   await expect(page.locator('.numi--pose-ready')).toHaveAttribute('src', /numi\/ready\.webp$/)
   await expect(setupHeading).not.toBeFocused()
   await expect(page.getByRole('link', { name: 'Skip to main content' })).toHaveAttribute('href', '#main-content')
-  await expect(page.getByRole('navigation', { name: 'Creator links' })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: 'Project and creator links' })).toBeVisible()
   const supportLink = page.getByRole('link', { name: /Support via Stripe/ })
   await expect(supportLink).toHaveAttribute('href', 'https://buy.stripe.com/8x200i8bSgVe3Vl3g8bfO00')
   await expect(supportLink).toHaveAttribute('rel', /noopener noreferrer/)
+  await openCustomization(page, true)
   await page.locator('#auto-advance').uncheck()
   await setQuestionCount(page, 1)
   await page.getByRole('button', { name: /Start sprint/ }).click()
@@ -72,7 +95,7 @@ test('completes an addition session entirely from the keyboard', async ({ page }
 })
 
 test('moves to the next question automatically after correct feedback', async ({ page }) => {
-  await page.locator('#problem-count').fill('1')
+  await setQuestionCount(page, 1)
   await page.getByRole('button', { name: /Start sprint/ }).click()
   await expect(page.locator('.auto-next-toggle')).toHaveAttribute('aria-pressed', 'true')
   const expression = await page.locator('.expression__pieces').innerText()
@@ -87,14 +110,15 @@ test('offers accessible one-click challenges without mobile overflow', async ({ 
   await page.setViewportSize({ width: 320, height: 568 })
   const presets = page.locator('[data-action="start-preset"]')
   await expect(presets).toHaveCount(3)
+  await openCustomization(page, true)
   await expect(page.getByRole('radio', { name: /Random/ })).toBeChecked()
-  expect(await page.locator('.numi--hero').evaluate((element) => getComputedStyle(element).animationName)).toBe('none')
+  await expect(page.locator('.numi--setup')).toBeHidden()
   await expect(page.getByRole('radio', { name: /Level/ })).toHaveCount(5)
   const levelFive = page.getByRole('radio', { name: /Level 5/ })
   const levelCard = await page.locator('input[name="challenge"][value="5"] + span').boundingBox()
   expect(levelCard?.height).toBeGreaterThanOrEqual(44)
   await levelFive.check()
-  await expect(page.getByText(/Level 5 starts at the approachable side/)).toBeVisible()
+  await expect(page.locator('.challenge-setting .selection-note')).toContainText('Level 5 starts at the approachable side')
   await expect(page.getByRole('heading', { name: 'Start with a complete challenge' })).toBeVisible()
   const quickWin = page.locator('[data-preset="quick-win"]')
   await expect(quickWin).toHaveAttribute('aria-pressed', 'false')
@@ -150,6 +174,7 @@ test('restores a draft, counts retries, reveals, and resumes after save and exit
 })
 
 test('builds mixed questions and supports the on-screen keypad', async ({ page }) => {
+  await openCustomization(page, true)
   await page.locator('#minDigits').selectOption('2')
   await page.locator('#maxDigits').selectOption('3')
   await page.getByText('Subtraction', { exact: true }).click()
@@ -175,6 +200,7 @@ test('builds mixed questions and supports the on-screen keypad', async ({ page }
 })
 
 test('persists vertical practice and scores a skipped question', async ({ page }) => {
+  await openCustomization(page, true)
   await page.getByLabel('Vertical').check()
   await setQuestionCount(page, 1)
   await page.getByRole('button', { name: /Start sprint/ }).click()
@@ -206,7 +232,8 @@ test('persists vertical practice and scores a skipped question', async ({ page }
     await expect(link).toHaveAttribute('rel', /noopener noreferrer/)
   }
 
-  await page.getByRole('button', { name: 'Change settings' }).click()
+  await page.getByRole('button', { name: 'View progress' }).click()
+  await expect(page.getByRole('heading', { name: 'See what your practice is building.' })).toBeFocused()
   const historyCard = page.getByRole('heading', { name: 'Performance history' }).locator('..')
   await expect(historyCard).toContainText('Full history')
   await expect(page.getByRole('button', { name: 'Reset this history' })).toBeEnabled()
@@ -282,13 +309,15 @@ test('retries the exact difficult set in a resumable unscored mastery review', a
   await expectAccessible(page, 'review completion')
   expect(await indexedResultCount(page)).toBe(1)
 
-  await page.getByRole('button', { name: 'Start another sprint' }).click()
+  await page.getByRole('button', { name: 'View progress' }).click()
   await expect(page.locator('.history-scope')).toContainText('Exact setup')
   await expect(page.locator('.history-scope')).toContainText('3 questions')
 })
 
 test('has no detectable WCAG A or AA violations in core views', async ({ page }) => {
   await expectAccessible(page, 'setup')
+  await openCustomization(page, true)
+  await expectAccessible(page, 'expanded setup')
 
   await setQuestionCount(page, 1)
   await page.getByRole('button', { name: /Start sprint/ }).click()
@@ -321,7 +350,7 @@ test('starts and resumes unscored focus practice from exact private history', as
   await page.getByRole('button', { name: 'Skip question (+20s)' }).click()
   await page.getByRole('button', { name: 'See results' }).click()
   await expect(page.getByRole('heading', { name: 'Focus on 1 question' })).toBeVisible()
-  await page.getByRole('button', { name: 'Change settings' }).click()
+  await page.getByRole('button', { name: 'View progress' }).click()
   const pastPractice = page.getByRole('button', { name: 'Practice past focus questions' })
   await expect(pastPractice).toBeVisible()
   await pastPractice.click()
@@ -335,15 +364,13 @@ test('starts and resumes unscored focus practice from exact private history', as
 
 test('keeps forced-color selection and focus states unambiguous', async ({ page }) => {
   await page.emulateMedia({ forcedColors: 'active' })
-
-  await expect(page.getByText('Hi, I’m Numi!')).toBeVisible()
-  await expect(page.locator('.numi--hero')).toBeHidden()
+  await expect(page.getByRole('heading', { name: 'Start a sprint in seconds.' })).toBeVisible()
+  await openCustomization(page, true)
 
   await expect(page.locator('.operation-choice--add .operation-choice__check')).toBeVisible()
   await expect(page.locator('.operation-choice--subtract .operation-choice__check')).toBeHidden()
   await expect(page.locator('#operator-count-1 + span')).toHaveCSS('outline-style', 'solid')
   await expect(page.locator('#mode-same + .mode-card__body')).toHaveCSS('outline-style', 'solid')
-  await expect(page.locator('#theme-forest + span')).toHaveCSS('outline-style', 'solid')
   await expect(page.locator('input[name="challenge"][value="random"] + span')).toHaveCSS('outline-style', 'solid')
   await page.locator('[data-preset="quick-win"]').focus()
   await expect(page.locator('[data-preset="quick-win"]')).toHaveCSS('outline-style', 'solid')
@@ -418,13 +445,14 @@ test('reviews corrected questions without expanding a perfect result', async ({ 
 
 test('persists themes and compact mode with accessible icon navigation', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 568 })
-  const bio = page.getByRole('link', { name: 'Author Bio (opens in a new tab)' })
+  const bio = page.getByRole('link', { name: /^Bio/ })
   await expect(bio).toBeVisible()
-  await expect(bio.locator('svg')).toHaveCount(1)
-  await expect(page.locator('.mascot-stage')).toBeVisible()
-
-  await page.getByText('Midnight', { exact: true }).click()
-  await page.locator('#density-compact').check()
+  await page.getByLabel('Appearance settings').click()
+  await page.getByRole('button', { name: /Midnight theme/ }).click()
+  await expect(page.getByLabel('Appearance settings')).toBeFocused()
+  await page.getByLabel('Appearance settings').click()
+  await page.getByRole('button', { name: /Compact layout/ }).click()
+  await expect(page.getByLabel('Appearance settings')).toBeFocused()
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'midnight')
   await expect(page.locator('html')).toHaveAttribute('data-density', 'compact')
   await expectAccessible(page, 'midnight compact setup')
@@ -516,32 +544,35 @@ test('has no page-level overflow at supported responsive widths', async ({ page 
     await page.setViewportSize(viewport)
     await page.goto(appPath)
     const dimensions = await page.evaluate(() => {
-      const hero = document.querySelector<HTMLImageElement>('.hero-art')
+      const header = document.querySelector<HTMLElement>('.site-header__inner')
       return {
         scrollWidth: document.documentElement.scrollWidth,
         clientWidth: document.documentElement.clientWidth,
-        heroWidth: hero?.getBoundingClientRect().width ?? 0,
-        heroHeight: hero?.getBoundingClientRect().height ?? 0,
-        mascotVisible: Boolean(document.querySelector('.mascot-stage')?.getBoundingClientRect().height),
+        headerHeight: header?.getBoundingClientRect().height ?? 0,
       }
     })
     expect(dimensions.scrollWidth, `${viewport.width}px layout overflowed`).toBeLessThanOrEqual(
       dimensions.clientWidth,
     )
-    if (dimensions.heroHeight > 0) {
-      expect(dimensions.heroWidth / dimensions.heroHeight, `${viewport.width}px hero ratio`).toBeCloseTo(1600 / 560, 1)
-    } else {
-      expect(viewport.width).toBeLessThanOrEqual(430)
-      expect(dimensions.mascotVisible).toBe(true)
-    }
+    expect(dimensions.headerHeight, `${viewport.width}px header wrapped`).toBeLessThanOrEqual(74)
   }
 })
 
 async function setQuestionCount(page: Page, count: number): Promise<void> {
+  await openCustomization(page)
   const input = page.locator('#problem-count')
   await input.fill(String(count))
   await input.press('Tab')
   await expect(input).toHaveValue(String(count))
+}
+
+async function openCustomization(page: Page, advanced = false): Promise<void> {
+  const customize = page.locator('#customize-setup')
+  if (!(await customize.evaluate((element) => (element as HTMLDetailsElement).open))) await customize.locator(':scope > summary').click()
+  if (advanced) {
+    const more = page.locator('#advanced-setup')
+    if (!(await more.evaluate((element) => (element as HTMLDetailsElement).open))) await more.locator(':scope > summary').click()
+  }
 }
 
 async function expectAccessible(page: Page, view: string): Promise<void> {

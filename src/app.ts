@@ -82,6 +82,8 @@ interface MotionIntent {
   progressTo?: number
 }
 
+type SetupDestination = 'practice' | 'progress'
+
 export class MathTrainingApp {
   private readonly root: HTMLElement
   private readonly store: StorePort
@@ -108,6 +110,10 @@ export class MathTrainingApp {
   private lastPersistedAt = 0
   private storageWarningShown = false
   private started = false
+  private setupDestination: SetupDestination = 'practice'
+  private customizeSetupOpen = false
+  private advancedSetupOpen = false
+  private pendingResultSave: Promise<void> | null = null
 
   constructor(root: HTMLElement, dependencies: AppDependencies = {}) {
     this.root = root
@@ -138,12 +144,13 @@ export class MathTrainingApp {
     this.root.addEventListener('input', this.handleInput)
     this.root.addEventListener('submit', this.handleSubmit)
     this.root.addEventListener('keydown', this.handleKeydown)
+    this.root.addEventListener('toggle', this.handleToggle, true)
     document.addEventListener('visibilitychange', this.handleVisibilityChange)
     window.addEventListener('beforeunload', this.handleBeforeUnload)
     this.timerId = window.setInterval(this.handleTimerTick, 250)
 
     this.render(this.state.view === 'setup' ? { event: 'setup-enter' } : this.state.view === 'practice' ? { event: 'practice-enter' } : undefined)
-    if (this.currentResult) void this.persistCompletedResult(this.currentResult)
+    if (this.currentResult) this.queueCompletedResultSave(this.currentResult)
     else if (!(this.state.view !== 'setup' && this.state.session?.mode === 'review')) void this.refreshHistory()
     if (this.state.view !== 'setup') this.focusCurrentView()
   }
@@ -156,6 +163,7 @@ export class MathTrainingApp {
     this.root.removeEventListener('input', this.handleInput)
     this.root.removeEventListener('submit', this.handleSubmit)
     this.root.removeEventListener('keydown', this.handleKeydown)
+    this.root.removeEventListener('toggle', this.handleToggle, true)
     document.removeEventListener('visibilitychange', this.handleVisibilityChange)
     window.removeEventListener('beforeunload', this.handleBeforeUnload)
     if (this.timerId !== null) window.clearInterval(this.timerId)
@@ -187,6 +195,13 @@ export class MathTrainingApp {
     switch (action) {
       case 'home':
         this.goHome()
+        break
+      case 'show-practice':
+        this.openSetupDestination('practice')
+        break
+      case 'show-progress':
+      case 'view-progress':
+        this.openSetupDestination('progress')
         break
       case 'resume-session':
         this.resumeSavedSession()
@@ -281,6 +296,13 @@ export class MathTrainingApp {
       default:
         break
     }
+  }
+
+  private readonly handleToggle = (event: Event): void => {
+    const details = event.target
+    if (!(details instanceof HTMLDetailsElement)) return
+    if (details.id === 'customize-setup') this.customizeSetupOpen = details.open
+    if (details.id === 'advanced-setup') this.advancedSetupOpen = details.open
   }
 
   private readonly handleChange = (event: Event): void => {
@@ -511,6 +533,7 @@ export class MathTrainingApp {
 
   private render(intent?: MotionIntent): void {
     this.root.dataset.view = this.state.view
+    this.root.dataset.section = this.state.view === 'setup' ? this.setupDestination : this.state.view
     this.root.dataset.motion = intent?.event ?? 'settled'
     if (intent?.progressFrom !== undefined && intent.progressTo !== undefined) {
       this.root.style.setProperty('--progress-from', `${intent.progressFrom}%`)
@@ -540,7 +563,12 @@ export class MathTrainingApp {
       </aside>
       <footer class="site-footer">
         <p><span aria-hidden="true">🔒</span> Settings and completed history stay in this browser. No account or tracking.</p>
-        <a href="https://github.com/dmoliveira/mental-math-sprint" target="_blank" rel="noopener noreferrer">View source <span class="sr-only">(opens in a new tab)</span></a>
+        <nav class="footer-links" aria-label="Project and creator links">
+          <a href="https://dmoliveira.github.io/my-cv-public/cv/human/" target="_blank" rel="noopener noreferrer">Bio<span class="sr-only"> (opens in a new tab)</span></a>
+          <a href="https://github.com/dmoliveira" target="_blank" rel="noopener noreferrer">GitHub<span class="sr-only"> (opens in a new tab)</span></a>
+          <a href="https://www.linkedin.com/in/dmztheone/" target="_blank" rel="noopener noreferrer">LinkedIn<span class="sr-only"> (opens in a new tab)</span></a>
+          <a href="https://github.com/dmoliveira/mental-math-sprint" target="_blank" rel="noopener noreferrer">View source<span class="sr-only"> (opens in a new tab)</span></a>
+        </nav>
       </footer>
     `
   }
@@ -555,12 +583,14 @@ export class MathTrainingApp {
     this.applyAppearance()
     this.persist(true)
     this.render()
+    window.requestAnimationFrame(() => this.root.querySelector<HTMLElement>('.appearance-menu > summary')?.focus())
     if (update.theme) this.announce(`${update.theme === 'midnight' ? 'Midnight' : 'Forest'} theme selected.`)
     if (update.density) this.announce(`${update.density === 'compact' ? 'Compact' : 'Comfortable'} layout selected.`)
   }
 
   private renderHeader(): string {
     const reviewing = this.state.session?.mode === 'review'
+    const activeDestination = this.state.view === 'practice' ? 'practice' : this.state.view === 'setup' ? this.setupDestination : null
     const practiceActions =
       this.state.view === 'practice'
         ? `<div class="header-actions">
@@ -582,15 +612,17 @@ export class MathTrainingApp {
             </span>
             <span class="brand__name">Mental Math Sprint</span>
           </button>
-          <nav class="creator-nav" aria-label="Creator links">
-            <a href="https://dmoliveira.github.io/my-cv-public/cv/human/" target="_blank" rel="noopener noreferrer" aria-label="Author Bio (opens in a new tab)">${icon('bio')}<span class="creator-label">Bio</span></a>
-            <a href="https://github.com/dmoliveira" target="_blank" rel="noopener noreferrer" aria-label="GitHub profile (opens in a new tab)">${icon('github')}<span class="creator-label">GitHub</span></a>
-            <a href="https://www.linkedin.com/in/dmztheone/" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn profile (opens in a new tab)">${icon('linkedin')}<span class="creator-label">LinkedIn</span></a>
+          <nav class="app-nav" aria-label="Primary navigation">
+            <button type="button" data-action="show-practice" ${activeDestination === 'practice' ? 'aria-current="page"' : ''}>Practice</button>
+            <button type="button" data-action="show-progress" ${activeDestination === 'progress' ? 'aria-current="page"' : ''}>Progress</button>
           </nav>
-          <div class="appearance-actions" aria-label="Display options">
-            <button class="icon-button" type="button" data-action="cycle-theme" aria-label="Switch to ${this.state.preferences.theme === 'forest' ? 'Midnight' : 'Forest'} theme" title="Switch theme">${icon(this.state.preferences.theme === 'forest' ? 'moon' : 'sun')}</button>
-            <button class="icon-button" type="button" data-action="toggle-density" aria-label="${this.state.preferences.density === 'compact' ? 'Use comfortable layout' : 'Use compact layout'}" aria-pressed="${this.state.preferences.density === 'compact'}" title="Toggle compact layout">${icon(this.state.preferences.density === 'compact' ? 'comfortable' : 'compact')}</button>
-          </div>
+          <details class="appearance-menu">
+            <summary aria-label="Appearance settings">${icon(this.state.preferences.theme === 'forest' ? 'sun' : 'moon')}<span>Appearance</span></summary>
+            <div class="appearance-menu__panel">
+              <button type="button" data-action="cycle-theme">${icon(this.state.preferences.theme === 'forest' ? 'moon' : 'sun')}<span><strong>${this.state.preferences.theme === 'forest' ? 'Midnight' : 'Forest'} theme</strong><small>Switch colour theme</small></span></button>
+              <button type="button" data-action="toggle-density" aria-pressed="${this.state.preferences.density === 'compact'}">${icon(this.state.preferences.density === 'compact' ? 'comfortable' : 'compact')}<span><strong>${this.state.preferences.density === 'compact' ? 'Comfortable' : 'Compact'} layout</strong><small>Change spacing density</small></span></button>
+            </div>
+          </details>
           ${practiceActions}
         </div>
       </header>
@@ -598,43 +630,49 @@ export class MathTrainingApp {
   }
 
   private renderSetup(): string {
+    if (this.setupDestination === 'progress') return this.renderProgress()
     const config = this.state.settings
     const errors = validateConfig(config)
     const canMix = config.operations.length >= 2 && config.operatorCount >= 2
     const example = this.renderExample(config, errors)
     const resumeCard = this.hasActiveSession() && this.state.session ? this.renderResumeCard(this.state.session) : ''
+    const customizeOpen = this.customizeSetupOpen || errors.length > 0
+    const advancedOpen = this.advancedSetupOpen || errors.length > 0
 
     return `
       <main id="main-content" class="page-shell setup-page">
         <section class="setup-hero" aria-labelledby="setup-heading">
-          <div class="eyebrow"><span aria-hidden="true">✦</span> Your next personal best starts here</div>
-          <h1 id="setup-heading" tabindex="-1">Train fast. Think clearly. Beat your best.</h1>
-          <p class="lede">Configure your sprint, race the clock, and build speed one focused answer at a time.</p>
-          <div class="mascot-stage">
-            <img class="mascot-orbit" src="${import.meta.env.BASE_URL}sprint-orbit.svg" alt="" width="1000" height="560" />
-            <img class="numi numi--hero numi--pose-ready" src="${numiSrc('ready')}" alt="" width="512" height="512" aria-hidden="true" />
-            <p><strong>Hi, I’m Numi!</strong><span>We’ll make big numbers feel smaller.</span></p>
-          </div>
-          <img class="hero-art" src="${import.meta.env.BASE_URL}mental-math-sprint-banner.svg" alt="" width="1600" height="560" />
-          <ul class="benefit-list" aria-label="Practice benefits">
-            <li><span aria-hidden="true">✓</span> Your rules, your pace</li>
-            <li><span aria-hidden="true">✓</span> Fast, clear feedback</li>
-            <li><span aria-hidden="true">✓</span> Personal bests saved privately</li>
-          </ul>
+          <div><p class="eyebrow"><span aria-hidden="true">✦</span> Focused arithmetic practice</p><h1 id="setup-heading" tabindex="-1">Start a sprint in seconds.</h1><p class="lede">Choose a ready-made challenge or use your current setup. Everything stays private in this browser.</p></div>
+          <img class="numi numi--setup numi--pose-ready" src="${numiSrc('ready')}" alt="" width="512" height="512" aria-hidden="true" />
         </section>
 
         <div class="setup-column">
           ${resumeCard}
           <div id="welcome-back-host">${this.renderWelcomeBack()}</div>
           ${this.renderPracticePresets()}
-          <form id="setup-form" class="settings-card" novalidate>
+          <form id="setup-form" class="settings-card setup-launch-card" novalidate>
             <div class="card-heading">
               <div>
-                <p class="step-label">Session setup</p>
-                <h2>Build your practice</h2>
+                <p class="step-label">Your current setup</p>
+                <h2>Ready when you are</h2>
               </div>
               <span class="privacy-pill"><span aria-hidden="true">●</span> Private</span>
             </div>
+
+            <div class="setup-summary"><p>${escapeHtml(formatConfigSummary(config))}</p><span>${escapeHtml(challengeDescription(config.challenge))}</span></div>
+            <button class="button button--primary button--large setup-start" type="submit" ${disabled(errors.length > 0)}>Start sprint <span aria-hidden="true">→</span></button>
+
+            <details id="customize-setup" class="setup-disclosure" ${customizeOpen ? 'open' : ''}>
+              <summary><span>Customize setup</span><small>Operations, number size, questions, challenge, and sprint behaviour.</small></summary>
+              <div class="setup-disclosure__body">
+
+            <fieldset class="setting-group">
+              <legend>Operations</legend>
+              <p class="field-hint">Pick one or more skills to practise.</p>
+              <div class="operation-grid">
+                ${OPERATIONS.map((operation) => this.renderOperationChoice(operation, config)).join('')}
+              </div>
+            </fieldset>
 
             <fieldset class="setting-group">
               <legend>Number size</legend>
@@ -647,6 +685,19 @@ export class MathTrainingApp {
               <p class="selection-note">${escapeHtml(digitRangeDescription(config))}</p>
             </fieldset>
 
+            <fieldset class="setting-group">
+              <legend>Questions this session</legend>
+              <div class="question-count-row">
+                <label class="number-field" for="problem-count"><span class="number-field__label">Custom</span><input id="problem-count" name="problemCount" type="number" min="1" max="50" step="1" value="${config.problemCount}" inputmode="numeric" /></label>
+                <div class="preset-row" aria-label="Quick question counts">${[5, 10, 20, 30].map((count) => `<button class="preset ${config.problemCount === count ? 'preset--active' : ''}" type="button" data-action="question-count" data-value="${count}" aria-pressed="${config.problemCount === count}">${count}</button>`).join('')}</div>
+              </div>
+              <p class="selection-note">Choose any amount from 1 to 50.</p>
+            </fieldset>
+
+            <details id="advanced-setup" class="setup-disclosure setup-disclosure--nested" ${advancedOpen ? 'open' : ''}>
+              <summary><span>More sprint options</span><small>Challenge, expression pattern, layout, sound, and timers.</small></summary>
+              <div class="setup-disclosure__body">
+
             <fieldset class="setting-group challenge-setting">
               <legend>Challenge path</legend>
               <p class="field-hint">Levels choose progressively tougher questions within your number and operation settings.</p>
@@ -654,14 +705,6 @@ export class MathTrainingApp {
                 ${CHALLENGE_OPTIONS.map((option) => `<label class="challenge-card"><input type="radio" name="challenge" value="${option.value}" ${checked(config.challenge === option.value)} /><span><b>${escapeHtml(option.title)}</b><small>${escapeHtml(option.detail)}</small></span></label>`).join('')}
               </div>
               <p class="selection-note">${escapeHtml(challengeDescription(config.challenge))}</p>
-            </fieldset>
-
-            <fieldset class="setting-group">
-              <legend>Operations</legend>
-              <p class="field-hint">Pick one or more skills to practise.</p>
-              <div class="operation-grid">
-                ${OPERATIONS.map((operation) => this.renderOperationChoice(operation, config)).join('')}
-              </div>
             </fieldset>
 
             <fieldset class="setting-group">
@@ -706,24 +749,6 @@ export class MathTrainingApp {
             </fieldset>
 
             <fieldset class="setting-group">
-              <legend>Questions this session</legend>
-              <div class="question-count-row">
-                <label class="number-field" for="problem-count">
-                  <span class="number-field__label">Custom</span>
-                  <input id="problem-count" name="problemCount" type="number" min="1" max="50" step="1" value="${config.problemCount}" inputmode="numeric" />
-                </label>
-                <div class="preset-row" aria-label="Quick question counts">
-                  ${[5, 10, 20, 30]
-                    .map(
-                      (count) => `<button class="preset ${config.problemCount === count ? 'preset--active' : ''}" type="button" data-action="question-count" data-value="${count}" aria-pressed="${config.problemCount === count}">${count}</button>`,
-                    )
-                    .join('')}
-                </div>
-              </div>
-              <p class="selection-note">Choose any amount from 1 to 50.</p>
-            </fieldset>
-
-            <fieldset class="setting-group">
               <legend>Experience</legend>
               <p class="field-hint">Choose how your sprint looks, fits, and sounds.</p>
               <div class="practice-options">
@@ -735,17 +760,6 @@ export class MathTrainingApp {
                   </div>
                   <p class="selection-note">Vertical stacks one-operation questions. Chained questions stay horizontal.</p>
                 </div>
-                <div>
-                  <span class="number-field__label">Colour theme</span>
-                  <div class="theme-options">
-                    <label class="theme-choice theme-choice--forest"><input id="theme-forest" type="radio" name="theme" value="forest" ${checked(this.state.preferences.theme === 'forest')} /><span>${icon('sun')}<strong>Forest</strong><small>Bright and calm</small></span></label>
-                    <label class="theme-choice theme-choice--midnight"><input id="theme-midnight" type="radio" name="theme" value="midnight" ${checked(this.state.preferences.theme === 'midnight')} /><span>${icon('moon')}<strong>Midnight</strong><small>Dark and focused</small></span></label>
-                  </div>
-                </div>
-                <label class="sound-option" for="density-compact">
-                  <input id="density-compact" type="checkbox" name="density" ${checked(this.state.preferences.density === 'compact')} />
-                  <span><strong>${icon('compact')} Compact layout</strong><small>Fits more of the sprint on small screens.</small></span>
-                </label>
                 <label class="sound-option" for="audio-enabled">
                   <input id="audio-enabled" type="checkbox" name="audioEnabled" ${checked(this.state.preferences.audioEnabled)} />
                   <span><strong>Play sound cues</strong><small>Optional feedback sounds; every result also appears on screen.</small></span>
@@ -761,20 +775,36 @@ export class MathTrainingApp {
               </div>
             </fieldset>
 
+              </div>
+            </details>
+
             <div id="setup-example-host">${example}</div>
             ${errors.length > 0 ? this.renderConfigErrors(errors) : ''}
-
-            <button class="button button--primary button--large" type="submit" ${disabled(errors.length > 0)}>
-              Start sprint <span aria-hidden="true">→</span>
-            </button>
+              </div>
+            </details>
             <p class="keyboard-note"><span aria-hidden="true">⌨</span> Built for keyboard and number-pad practice.</p>
           </form>
-          <div id="history-card-host">${this.renderHistoryCard()}</div>
         </div>
 
         ${this.renderSetupDialogs()}
       </main>
     `
+  }
+
+  private renderProgress(): string {
+    return `
+      <main id="main-content" class="page-shell progress-page">
+        <section class="progress-intro" aria-labelledby="progress-heading">
+          <div><p class="eyebrow"><span aria-hidden="true">↗</span> Private progress</p><h1 id="progress-heading" tabindex="-1">See what your practice is building.</h1><p class="lede">Results are grouped by your exact setup and stay on this device.</p></div>
+          <button class="button button--primary" type="button" data-action="show-practice">Start a sprint</button>
+        </section>
+        <section class="progress-context" aria-label="Progress filter">
+          <div><span>Showing exact setup</span><strong>${escapeHtml(formatConfigSummary(this.state.settings))}</strong></div>
+          <button class="button button--quiet" type="button" data-action="show-practice">Change setup</button>
+        </section>
+        <div id="history-card-host">${this.renderHistoryCard()}</div>
+        ${this.renderSetupDialogs()}
+      </main>`
   }
 
   private renderPracticePresets(): string {
@@ -1128,6 +1158,7 @@ export class MathTrainingApp {
           <div class="completion-actions">
             <button class="button button--primary button--large" type="button" data-action="practice-again">Review again <span aria-hidden="true">↻</span></button>
             <button class="button button--secondary button--large" type="button" data-action="change-settings">Start another sprint</button>
+            <button class="button button--quiet button--large" type="button" data-action="view-progress">View progress</button>
           </div>
           <p class="completion-note"><span aria-hidden="true">🔒</span> Review rounds stay resumable on this device but never affect rankings or history.</p>
         </section>
@@ -1162,7 +1193,7 @@ export class MathTrainingApp {
     const sprintAgain = hasFocus || mission?.kind === 'stretch'
       ? '<button class="button button--secondary button--large" type="button" data-action="practice-again">Sprint again</button>'
       : ''
-    return `<section class="sprint-debrief" aria-labelledby="debrief-heading"><div class="debrief-summary"><div><p class="step-label">Your debrief</p><h2 id="debrief-heading">${hasFocus ? `Focus on ${debrief.focusItems.length} ${pluralize(debrief.focusItems.length, 'question')}` : 'Keep the rhythm'}</h2><p>${escapeHtml(summary)}</p>${hasFocus ? '<p class="field-hint">Review is optional, private, and unscored. Sprint again whenever you would rather keep moving.</p>' : mission ? `<p class="field-hint">${escapeHtml(mission.detail)}</p>` : ''}</div>${evidence}</div><div class="debrief-actions">${primary}${sprintAgain}<button class="button button--quiet button--large" type="button" data-action="change-settings">Change settings</button></div>${this.renderQuestionBreakdown(debrief.items)}</section>`
+    return `<section class="sprint-debrief" aria-labelledby="debrief-heading"><div class="debrief-summary"><div><p class="step-label">Your debrief</p><h2 id="debrief-heading">${hasFocus ? `Focus on ${debrief.focusItems.length} ${pluralize(debrief.focusItems.length, 'question')}` : 'Keep the rhythm'}</h2><p>${escapeHtml(summary)}</p>${hasFocus ? '<p class="field-hint">Review is optional, private, and unscored. Sprint again whenever you would rather keep moving.</p>' : mission ? `<p class="field-hint">${escapeHtml(mission.detail)}</p>` : ''}</div>${evidence}</div><div class="debrief-actions">${primary}${sprintAgain}<button class="button button--quiet button--large" type="button" data-action="change-settings">Change settings</button><button class="button button--quiet button--large" type="button" data-action="view-progress">View progress</button></div>${this.renderQuestionBreakdown(debrief.items)}</section>`
   }
 
   private renderDebriefFocus(item: DebriefItem): string {
@@ -1212,6 +1243,14 @@ export class MathTrainingApp {
     }
     if (generation !== this.historyGeneration) return
     await this.refreshHistory(result.config)
+  }
+
+  private queueCompletedResultSave(result: SprintResult): void {
+    const pending = this.persistCompletedResult(result)
+    this.pendingResultSave = pending
+    void pending.finally(() => {
+      if (this.pendingResultSave === pending) this.pendingResultSave = null
+    })
   }
 
   private async refreshHistory(config: TrainingConfig = this.state.view === 'complete' && this.state.session ? this.state.session.config : this.state.settings): Promise<void> {
@@ -1406,6 +1445,7 @@ export class MathTrainingApp {
       view: 'setup',
       session: pauseSession(this.state.session, this.now()),
     }
+    this.setupDestination = 'practice'
     const saved = this.persist(true)
     this.notice = saved
       ? { message: 'Session saved on this device.', tone: 'info' }
@@ -1423,6 +1463,7 @@ export class MathTrainingApp {
     this.cancelAutoAdvance()
     this.suspendAudio()
     this.currentResult = null
+    this.setupDestination = 'practice'
     this.state = { ...this.state, view: 'setup', session: null }
     this.notice = { message: 'Saved session discarded. Your settings are still here.', tone: 'info' }
     this.persist(true)
@@ -1435,6 +1476,8 @@ export class MathTrainingApp {
     this.cancelAutoAdvance()
     this.suspendAudio()
     this.currentResult = null
+    this.setupDestination = 'practice'
+    this.customizeSetupOpen = true
     this.state = { ...this.state, view: 'setup', session: null }
     this.notice = null
     this.persist(true)
@@ -1444,13 +1487,35 @@ export class MathTrainingApp {
   }
 
   private goHome(): void {
-    if (this.state.view === 'practice') {
-      this.saveAndExit()
-    } else if (this.state.view === 'complete') {
-      this.changeSettings()
-    } else {
-      document.getElementById('setup-heading')?.focus()
+    this.openSetupDestination('practice')
+  }
+
+  private openSetupDestination(destination: SetupDestination): void {
+    if (this.state.view === 'setup' && this.setupDestination === destination) {
+      document.getElementById(destination === 'practice' ? 'setup-heading' : 'progress-heading')?.focus()
+      return
     }
+    this.cancelAutoAdvance()
+    this.suspendAudio()
+    const session = this.state.session
+    const settings = this.state.view === 'complete' && session?.mode === 'sprint' ? cloneConfig(session.config) : this.state.settings
+    const resumable = this.state.view === 'practice' && session?.completedAt === null ? pauseSession(session, this.now()) : null
+    this.state = { ...this.state, view: 'setup', settings, session: resumable }
+    this.setupDestination = destination
+    this.notice = null
+    if (destination === 'practice' && !resumable) this.currentResult = null
+    this.persist(true)
+    this.render({ event: 'setup-enter' })
+    const pending = this.pendingResultSave
+    if (destination === 'progress') {
+      if (pending) {
+        void pending.then(() => {
+          if (!this.started || this.state.view !== 'setup' || this.setupDestination !== 'progress') return
+          if (this.history?.configKey !== configKey(settings)) void this.refreshHistory(settings)
+        })
+      } else if (this.history?.configKey !== configKey(settings)) void this.refreshHistory(settings)
+    }
+    this.focusCurrentView()
   }
 
   private submitCurrentAnswer(): void {
@@ -1507,7 +1572,7 @@ export class MathTrainingApp {
     }
     this.persist(true)
     this.render(advanced.completedAt === null ? { event: 'question-enter' } : { event: 'completion-enter' })
-    if (this.currentResult && advanced.mode === 'sprint' && advanced.completedAt !== null && session.completedAt === null) void this.persistCompletedResult(this.currentResult)
+    if (this.currentResult && advanced.mode === 'sprint' && advanced.completedAt !== null && session.completedAt === null) this.queueCompletedResultSave(this.currentResult)
     this.focusCurrentView()
   }
 
@@ -1757,7 +1822,8 @@ export class MathTrainingApp {
     } else if (this.state.view === 'complete') {
       window.requestAnimationFrame(() => document.getElementById('completion-heading')?.focus())
     } else {
-      window.requestAnimationFrame(() => document.getElementById('setup-heading')?.focus())
+      const heading = this.setupDestination === 'progress' ? 'progress-heading' : 'setup-heading'
+      window.requestAnimationFrame(() => document.getElementById(heading)?.focus())
     }
   }
 
