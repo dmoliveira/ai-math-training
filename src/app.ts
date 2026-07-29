@@ -34,6 +34,7 @@ import { DEFAULT_PREFERENCES, configKey, effectiveOrientation, type AudioCue, ty
 import { SynthAudio } from './sprint/audio'
 import { BrowserShare, createSocialShareLinks } from './sprint/share'
 import { createSharePayload, createSprintResult, dailyStatistics, rankResults, type DailyStatistics, type ResultStore, type SprintResult } from './sprint/results'
+import { PRACTICE_PRESETS, deriveLearningMilestones, deriveNextMission, matchingPresetId, practicePreset } from './sprint/guidance'
 import { IndexedDbResultStore } from './storage/result-store'
 import { icon } from './ui/icons'
 import {
@@ -206,6 +207,20 @@ export class MathTrainingApp {
       case 'question-count':
         this.setQuestionCount(actionElement.dataset.value ?? '', actionElement)
         break
+      case 'start-preset': {
+        const preset = practicePreset(actionElement.dataset.preset ?? '')
+        if (preset) this.requestSprintStart(preset.config)
+        break
+      }
+      case 'start-current-setup':
+        this.requestSprintStart(this.state.settings)
+        break
+      case 'start-next-mission': {
+        const session = this.state.session
+        const mission = session ? deriveNextMission(session) : null
+        if (mission?.kind === 'stretch') this.requestSprintStart(mission.config)
+        break
+      }
       case 'practice-again':
         this.restartSession()
         break
@@ -345,7 +360,10 @@ export class MathTrainingApp {
           ...this.state,
           settings: { ...this.state.settings, problemCount: value },
         }
+        this.persist()
         this.updateQuestionCountPresets()
+        this.updatePracticePresetSelection()
+        void this.refreshHistory(this.state.settings)
       }
     }
   }
@@ -552,6 +570,8 @@ export class MathTrainingApp {
 
         <div class="setup-column">
           ${resumeCard}
+          <div id="welcome-back-host">${this.renderWelcomeBack()}</div>
+          ${this.renderPracticePresets()}
           <form id="setup-form" class="settings-card" novalidate>
             <div class="card-heading">
               <div>
@@ -683,6 +703,35 @@ export class MathTrainingApp {
         ${this.renderSetupDialogs()}
       </main>
     `
+  }
+
+  private renderPracticePresets(): string {
+    const selectedPreset = matchingPresetId(this.state.settings)
+    return `
+      <section class="practice-presets" aria-labelledby="practice-presets-heading">
+        <div class="card-heading">
+          <div><p class="step-label">Choose a path</p><h2 id="practice-presets-heading">Start with a complete challenge</h2></div>
+          <span class="preset-state">${selectedPreset === 'custom' ? 'Custom setup' : 'Preset selected'}</span>
+        </div>
+        <p class="field-hint">Each option sets every practice choice and starts immediately. You can still build your own below.</p>
+        <div class="practice-preset-grid">
+          ${PRACTICE_PRESETS.map((preset) => {
+            const active = selectedPreset === preset.id
+            return `<button class="practice-preset ${active ? 'practice-preset--active' : ''}" type="button" data-action="start-preset" data-preset="${preset.id}" aria-pressed="${active}"><span>${escapeHtml(preset.eyebrow)}</span><strong>${escapeHtml(preset.title)}</strong><small>${escapeHtml(preset.description)}</small><b>${active ? 'Selected · Start' : 'Start challenge'} <span aria-hidden="true">→</span></b></button>`
+          }).join('')}
+        </div>
+      </section>`
+  }
+
+  private renderWelcomeBack(): string {
+    if (this.hasActiveSession()) return ''
+    const key = configKey(this.state.settings)
+    const snapshot = this.history?.configKey === key ? this.history : null
+    if (!snapshot || snapshot.status === 'loading') return '<aside class="welcome-back"><p>Looking up this exact setup on your device…</p></aside>'
+    if (snapshot.status !== 'ok' || snapshot.results.length === 0) return ''
+    const recent = snapshot.results[0]!
+    const best = snapshot.ranked[0]
+    return `<aside class="welcome-back" aria-labelledby="welcome-back-heading"><div><p class="step-label">Welcome back</p><h2 id="welcome-back-heading">Continue this exact setup</h2><p>Most recent: ${recent.totals.accuracyPercent}% first-try accuracy in ${formatDuration(recent.totals.scoredElapsedMs)} on ${escapeHtml(formatResultDate(recent.completedAt))}.${best ? ` Personal best: ${formatDuration(best.totals.scoredElapsedMs)}.` : ' No ranked result is available yet.'}</p><small>${escapeHtml(formatConfigSummary(this.state.settings))}</small></div><button class="button button--primary" type="button" data-action="start-current-setup">Start this setup <span aria-hidden="true">→</span></button></aside>`
   }
 
   private renderResumeCard(session: TrainingSession): string {
@@ -966,12 +1015,13 @@ export class MathTrainingApp {
           </dl>
 
           ${this.renderCompletionCoach(session)}
+          ${this.renderLearningMilestones(session)}
           <div id="completion-ranking-host">${this.renderCompletionRanking(session)}</div>
           ${review}
+          ${this.renderNextMission(session)}
           ${this.renderShareCard(session)}
 
           <div class="completion-actions">
-            <button class="button button--primary button--large" type="button" data-action="practice-again">Sprint again <span aria-hidden="true">↻</span></button>
             <button class="button button--secondary button--large" type="button" data-action="change-settings">Change settings</button>
           </div>
           <p class="completion-note"><span aria-hidden="true">🌱</span> A little consistent practice makes big numbers feel smaller.</p>
@@ -1007,6 +1057,7 @@ export class MathTrainingApp {
           <section class="training-insight training-insight--review" aria-labelledby="review-coaching-heading">
             <p class="step-label">Your next move</p><h2 id="review-coaching-heading">Keep the learning loop going</h2><p>${escapeHtml(coaching)}</p>
           </section>
+          ${this.renderLearningMilestones(session)}
           <div class="completion-actions">
             <button class="button button--primary button--large" type="button" data-action="practice-again">Review again <span aria-hidden="true">↻</span></button>
             <button class="button button--secondary button--large" type="button" data-action="change-settings">Start another sprint</button>
@@ -1014,6 +1065,23 @@ export class MathTrainingApp {
           <p class="completion-note"><span aria-hidden="true">🔒</span> Review rounds stay resumable on this device but never affect rankings or history.</p>
         </section>
       </main>`
+  }
+
+  private renderLearningMilestones(session: TrainingSession): string {
+    const milestones = deriveLearningMilestones(session)
+    if (milestones.length === 0) return ''
+    return `<section class="learning-milestones" aria-labelledby="milestones-heading"><p class="step-label">Milestones from this round</p><h2 id="milestones-heading">Progress worth noticing</h2><ul>${milestones.map((milestone) => `<li><span aria-hidden="true">✦</span><div><strong>${escapeHtml(milestone.title)}</strong><p>${escapeHtml(milestone.detail)}</p></div></li>`).join('')}</ul><p class="field-hint">Milestones describe this completed round; they are not streaks or points.</p></section>`
+  }
+
+  private renderNextMission(session: TrainingSession): string {
+    const mission = deriveNextMission(session)
+    if (!mission) return ''
+    const action = mission.kind === 'review'
+      ? '<button class="button button--primary button--large" type="button" data-action="start-review">Start exact review <span aria-hidden="true">→</span></button>'
+      : mission.kind === 'stretch'
+        ? '<button class="button button--primary button--large" type="button" data-action="start-next-mission">Start one-step stretch <span aria-hidden="true">→</span></button>'
+        : '<button class="button button--primary button--large" type="button" data-action="practice-again">Repeat this setup <span aria-hidden="true">↻</span></button>'
+    return `<section class="next-mission" aria-labelledby="next-mission-heading"><div><p class="step-label">Recommended next mission</p><h2 id="next-mission-heading">${escapeHtml(mission.title)}</h2><p>${escapeHtml(mission.detail)}</p></div>${action}</section>`
   }
 
   private renderCompletionCoach(session: TrainingSession): string {
@@ -1071,7 +1139,6 @@ export class MathTrainingApp {
             )
             .join('')}
         </ul>
-        <button class="button button--primary" type="button" data-action="start-review">Practice these exact questions <span aria-hidden="true">→</span></button>
         <p class="field-hint">This focused review is unscored and will not affect your personal rankings or history.</p>
       </section>
     `
@@ -1159,6 +1226,8 @@ export class MathTrainingApp {
   }
 
   private syncHistorySurfaces(): void {
+    const welcome = this.root.querySelector<HTMLElement>('#welcome-back-host')
+    if (welcome) welcome.innerHTML = this.renderWelcomeBack()
     const setup = this.root.querySelector<HTMLElement>('#history-card-host')
     if (setup) setup.innerHTML = this.renderHistoryCard()
     const ranking = this.root.querySelector<HTMLElement>('#completion-ranking-host')
@@ -1212,6 +1281,17 @@ export class MathTrainingApp {
     this.persist(true)
     this.render()
     this.focusPracticeInput()
+  }
+
+  private requestSprintStart(config: TrainingConfig): void {
+    if (validateConfig(config).length > 0) return
+    this.state = { ...this.state, settings: cloneConfig(config) }
+    this.persist(true)
+    if (this.hasActiveSession()) {
+      this.openDialog('replace-dialog')
+      return
+    }
+    this.startNewSession()
   }
 
   private restartSession(): void {
@@ -1507,6 +1587,17 @@ export class MathTrainingApp {
       button.classList.toggle('preset--active', active)
       button.setAttribute('aria-pressed', String(active))
     }
+  }
+
+  private updatePracticePresetSelection(): void {
+    const selectedPreset = matchingPresetId(this.state.settings)
+    for (const button of this.root.querySelectorAll<HTMLButtonElement>('[data-action="start-preset"]')) {
+      const active = button.dataset.preset === selectedPreset
+      button.classList.toggle('practice-preset--active', active)
+      button.setAttribute('aria-pressed', String(active))
+    }
+    const state = this.root.querySelector<HTMLElement>('.preset-state')
+    if (state) state.textContent = selectedPreset === 'custom' ? 'Custom setup' : 'Preset selected'
   }
 
   private updateTimerText(): void {

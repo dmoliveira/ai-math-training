@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MathTrainingApp } from './app'
 import { DEFAULT_CONFIG } from './math/engine'
 import { DEFAULT_PREFERENCES, type SharePayload } from './sprint/contracts'
-import type { ResultPage, ResultStore, ResultStoreWriteResult } from './sprint/results'
+import { createSprintResult, type ResultPage, type ResultStore, type ResultStoreWriteResult } from './sprint/results'
 import { advanceSession, checkCurrentAnswer, createReviewSession, createTrainingSession, pauseSession, setCurrentDraft, skipCurrentProblem } from './state/session'
 import {
   APP_SCHEMA_VERSION,
@@ -25,7 +25,7 @@ const createPracticeState = (): PersistedAppState => {
 
 const createStore = (result: StoreLoadResult) => ({
   load: vi.fn(() => result),
-  save: vi.fn(() => true),
+  save: vi.fn((state: PersistedAppState) => Boolean(state)),
   clear: vi.fn(() => true),
   clearAll: vi.fn(() => true),
 })
@@ -66,6 +66,10 @@ describe('MathTrainingApp lifecycle', () => {
         return 1
       },
     })
+    Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
+      configurable: true,
+      value(this: HTMLDialogElement) { this.setAttribute('open', '') },
+    })
   })
 
   afterEach(() => {
@@ -88,6 +92,116 @@ describe('MathTrainingApp lifecycle', () => {
     app.start()
     expect(document.activeElement).toBe(sentinel)
     expect(document.querySelector<HTMLImageElement>('.numi--pose-ready')?.src).toContain('/numi/ready.webp')
+    app.destroy()
+  })
+
+  it('starts a complete guided preset with one click', () => {
+    const store = createStore({ status: 'empty', state: null })
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store, now: () => 1_000, createSeed: () => 7 })
+    app.start()
+
+    expect(root.querySelectorAll('[data-action="start-preset"]')).toHaveLength(3)
+    expect(root.textContent).toContain('Custom setup')
+    root.querySelector<HTMLButtonElement>('[data-preset="quick-win"]')!.click()
+
+    const saved = store.save.mock.calls.at(-1)![0] as PersistedAppState
+    expect(saved.view).toBe('practice')
+    expect(saved.settings).toEqual({ minDigits: 1, maxDigits: 1, operatorCount: 1, operationMode: 'same', operations: ['add', 'subtract'], problemCount: 5 })
+    expect(saved.session?.config).toEqual(saved.settings)
+    expect(root.querySelector('#answer-form')).not.toBeNull()
+    app.destroy()
+  })
+
+  it.each(['sprint', 'review'] as const)('protects an incomplete saved %s before a guided preset replaces it', (mode) => {
+    const state = createPracticeState()
+    state.view = 'setup'
+    if (mode === 'review') {
+      let source = createTrainingSession({ ...DEFAULT_CONFIG, problemCount: 1 }, 12, 0)
+      source = advanceSession(skipCurrentProblem(source, 100), 200)
+      state.session = pauseSession(createReviewSession(source, 300)!, 300)
+    }
+    const store = createStore({ status: 'ok', state })
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store, now: () => 1_000, createSeed: () => 8 })
+    app.start()
+
+    root.querySelector<HTMLButtonElement>('[data-preset="build-fluency"]')!.click()
+    expect(root.querySelector<HTMLDialogElement>('#replace-dialog')?.open).toBe(true)
+    expect(root.querySelector('#answer-form')).toBeNull()
+    root.querySelector<HTMLButtonElement>('[data-action="confirm-replace"]')!.click()
+
+    const saved = store.save.mock.calls.at(-1)![0] as PersistedAppState
+    expect(saved.view).toBe('practice')
+    expect(saved.session?.mode).toBe('sprint')
+    expect(saved.session?.config.operations).toEqual(['multiply', 'divide'])
+    expect(saved.session?.config.problemCount).toBe(10)
+    app.destroy()
+  })
+
+  it('uses guarded exact-setup history for a returning-user quick start', async () => {
+    let session = createTrainingSession({ ...DEFAULT_CONFIG, operations: [...DEFAULT_CONFIG.operations], problemCount: 1 }, 9, 0)
+    session = setCurrentDraft(session, session.problems[0]!.answer)
+    session = advanceSession(checkCurrentAnswer(session, 100), 200)
+    const result = createSprintResult(session)!
+    const page = { ...emptyResultPage(), results: [result] }
+    const resultStore = createResultStore()
+    resultStore.listCompleted = vi.fn(async () => page)
+    resultStore.listRanked = vi.fn(async () => page)
+    resultStore.listCompletedSince = vi.fn(async () => page)
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store: createStore({ status: 'empty', state: null }), resultStore, now: () => 1_000, createSeed: () => 10 })
+    app.start()
+
+    await vi.waitFor(() => expect(root.textContent).toContain('Continue this exact setup'))
+    expect(root.textContent).toContain('100% first-try accuracy')
+    expect(root.textContent).toContain('Personal best')
+    root.querySelector<HTMLButtonElement>('[data-action="start-current-setup"]')!.click()
+    expect(root.querySelector('#answer-form')).not.toBeNull()
+    app.destroy()
+  })
+
+  it('does not render a stale welcome-back result after the setup changes', async () => {
+    let oldSession = createTrainingSession({ ...DEFAULT_CONFIG, operations: [...DEFAULT_CONFIG.operations], problemCount: 1 }, 11, 0)
+    oldSession = setCurrentDraft(oldSession, oldSession.problems[0]!.answer)
+    oldSession = advanceSession(checkCurrentAnswer(oldSession, 100), 200)
+    const oldResult = createSprintResult(oldSession)!
+    let resolveOld: (page: ResultPage) => void = () => undefined
+    const oldPage = new Promise<ResultPage>((resolve) => { resolveOld = resolve })
+    const resultStore = createResultStore()
+    resultStore.listCompleted = vi.fn().mockReturnValueOnce(oldPage).mockResolvedValue(emptyResultPage())
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store: createStore({ status: 'empty', state: null }), resultStore, now: () => 1_000 })
+    app.start()
+
+    const maxDigits = root.querySelector<HTMLSelectElement>('#maxDigits')!
+    maxDigits.value = '3'
+    maxDigits.dispatchEvent(new Event('change', { bubbles: true }))
+    await vi.waitFor(() => expect(resultStore.listCompleted).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(root.textContent).toContain('No completed results yet.'))
+    resolveOld({ ...emptyResultPage(), results: [oldResult] })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(root.textContent).not.toContain('Continue this exact setup')
+    expect(root.textContent).not.toContain('100% first-try accuracy')
+    app.destroy()
+  })
+
+  it('invalidates exact-setup guidance while a valid custom question count is typed', async () => {
+    const resultStore = createResultStore()
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store: createStore({ status: 'empty', state: null }), resultStore, now: () => 1_000 })
+    app.start()
+    await vi.waitFor(() => expect(root.textContent).toContain('No completed results yet.'))
+
+    const input = root.querySelector<HTMLInputElement>('#problem-count')!
+    input.value = '7'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+
+    await vi.waitFor(() => expect(resultStore.listCompleted).toHaveBeenCalledTimes(2))
+    expect(root.textContent).toContain('Custom setup')
+    expect(root.querySelector('[data-action="start-preset"][aria-pressed="true"]')).toBeNull()
     app.destroy()
   })
 
@@ -292,7 +406,7 @@ describe('MathTrainingApp lifecycle', () => {
     root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
 
     await vi.waitFor(() => expect(resultStore.saveCompleted).toHaveBeenCalledOnce())
-    expect(root.textContent).toContain('Practice these exact questions')
+    expect(root.textContent).toContain('Start exact review')
     expect(root.textContent).toContain('Training insight')
     const rankingCalls = vi.mocked(resultStore.listRanked).mock.calls.length
     const originalExpression = root.querySelector('.review-expression')?.getAttribute('aria-label')?.split(' equals ')[0]
