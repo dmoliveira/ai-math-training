@@ -1,5 +1,6 @@
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Page } from '@playwright/test'
+import { existsSync } from 'node:fs'
 
 const appPath = '/mental-math-sprint/'
 
@@ -20,6 +21,7 @@ test.beforeEach(async ({ page }) => {
 test('completes an addition session entirely from the keyboard', async ({ page }) => {
   const setupHeading = page.getByRole('heading', { name: 'Train fast. Think clearly. Beat your best.' })
   await expect(setupHeading).toBeVisible()
+  await expect(page.locator('.numi--pose-ready')).toHaveAttribute('src', /numi\/ready\.webp$/)
   await expect(setupHeading).not.toBeFocused()
   await expect(page.getByRole('link', { name: 'Skip to main content' })).toHaveAttribute('href', '#main-content')
   await expect(page.getByRole('navigation', { name: 'Creator links' })).toBeVisible()
@@ -28,6 +30,7 @@ test('completes an addition session entirely from the keyboard', async ({ page }
   await expect(supportLink).toHaveAttribute('rel', /noopener noreferrer/)
   await setQuestionCount(page, 1)
   await page.getByRole('button', { name: /Start sprint/ }).click()
+  await expect(page.locator('.numi--pose-thinking')).toHaveAttribute('src', /numi\/thinking\.webp$/)
 
   const input = page.getByLabel('Your answer')
   await expect(input).toBeFocused()
@@ -38,11 +41,15 @@ test('completes an addition session entirely from the keyboard', async ({ page }
   await input.fill(String((operands[0] ?? 0) + (operands[1] ?? 0)))
   await input.press('Enter')
   await expect(page.getByText('Correct.', { exact: true })).toBeVisible()
+  await expect(page.locator('.numi--pose-celebration')).toBeVisible()
+  await expectAccessible(page, 'correct answer')
   await expect(page.locator('#app-announcer')).toHaveText('Correct. See your results.')
   await expect(input).toHaveAttribute('readonly', '')
 
   await page.keyboard.press('Enter')
   await expect(page.getByRole('heading', { name: 'Perfect run!' })).toBeVisible()
+  await expect(page.locator('.numi--completion.numi--pose-celebration')).toBeVisible()
+  await expectAccessible(page, 'perfect completion')
   await expect(page.getByText('100%')).toBeVisible()
   await expect(page.locator('.result-card').filter({ hasText: 'Mistakes' }).locator('dd')).toContainText('0')
   await expect(page.getByRole('heading', { name: 'Review these questions' })).toHaveCount(0)
@@ -56,6 +63,7 @@ test('restores a draft, counts retries, reveals, and resumes after save and exit
   await input.fill('0')
   await input.press('Enter')
   await expect(page.getByText('Not quite.', { exact: true })).toBeVisible()
+  await expect(page.locator('.numi--pose-encouraging')).toHaveAttribute('src', /numi\/encouraging\.webp$/)
   await expect(page.locator('#app-announcer')).toHaveText('Incorrect. Try again.')
   await expect(page.getByText('1', { exact: true }).last()).toBeVisible()
   await expect(input).toHaveAttribute('aria-invalid', 'true')
@@ -72,6 +80,7 @@ test('restores a draft, counts retries, reveals, and resumes after save and exit
   await expect(revealDialog).toBeVisible()
   await revealDialog.getByRole('button', { name: 'Reveal answer' }).click()
   await expect(page.locator('#answer-feedback')).toContainText('Answer revealed:')
+  await expect(page.locator('.numi--pose-thinking')).toBeVisible()
   await expect(page.locator('#app-announcer')).toContainText('Answer revealed:')
 
   await page.getByRole('button', { name: 'Next question' }).click()
@@ -121,6 +130,7 @@ test('persists vertical practice and scores a skipped question', async ({ page }
   await page.getByRole('button', { name: 'Skip question (+20s)' }).click()
 
   await expect(page.locator('#answer-feedback')).toContainText('20 seconds added')
+  await expect(page.locator('.numi--pose-encouraging')).toBeVisible()
   await expect(page.locator('.mascot-coach--skipped')).toBeVisible()
   await expect(page.getByText(/100% complete/)).toBeVisible()
   await expect(page.locator('#app-announcer')).toContainText('Question skipped. 20 seconds added.')
@@ -183,6 +193,8 @@ test('retries the exact difficult set in a resumable unscored mastery review', a
 
   await page.getByRole('button', { name: /Practice these exact questions/ }).click()
   await expect(page.getByText(/Mistake-to-mastery review/)).toBeVisible()
+  await expect(page.locator('.numi--pose-thinking')).toBeVisible()
+  await expect(page.locator('.mascot-coach p')).toContainText('We’ve seen this one before')
   await expect(page.locator('.support-card')).toBeHidden()
   await expect(page.locator('.expression')).toHaveAttribute('aria-label', sourceExpressions[0]!)
   await expect(page.getByRole('button', { name: 'Skip question' })).toBeVisible()
@@ -191,6 +203,7 @@ test('retries the exact difficult set in a resumable unscored mastery review', a
 
   await page.getByRole('button', { name: 'Skip question' }).click()
   await expect(page.locator('#answer-feedback')).toContainText('Keep it in your next review round')
+  await expect(page.locator('.numi--pose-encouraging')).toBeVisible()
   await page.getByRole('button', { name: 'Save & exit' }).click()
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Continue your review' })).toBeVisible()
@@ -205,6 +218,7 @@ test('retries the exact difficult set in a resumable unscored mastery review', a
   }
 
   await expect(page.getByRole('heading', { name: 'Review complete.' })).toBeVisible()
+  await expect(page.locator('.numi--completion.numi--pose-encouraging')).toBeVisible()
   await expect(page.getByText('Unscored mastery round')).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Personal top five' })).toHaveCount(0)
   await expect(page.getByRole('heading', { name: 'Share this result' })).toHaveCount(0)
@@ -223,6 +237,11 @@ test('has no detectable WCAG A or AA violations in core views', async ({ page })
   await setQuestionCount(page, 1)
   await page.getByRole('button', { name: /Start sprint/ }).click()
   await expectAccessible(page, 'practice')
+
+  await page.getByLabel('Your answer').fill('0')
+  await page.getByLabel('Your answer').press('Enter')
+  await expect(page.locator('.numi--pose-encouraging')).toBeVisible()
+  await expectAccessible(page, 'incorrect answer')
 
   const revealButton = page.getByRole('button', { name: 'Reveal answer' })
   await revealButton.click()
@@ -243,6 +262,9 @@ test('has no detectable WCAG A or AA violations in core views', async ({ page })
 test('keeps forced-color selection and focus states unambiguous', async ({ page }) => {
   await page.emulateMedia({ forcedColors: 'active' })
 
+  await expect(page.getByText('Hi, I’m Numi!')).toBeVisible()
+  await expect(page.locator('.numi--hero')).toBeHidden()
+
   await expect(page.locator('.operation-choice--add .operation-choice__check')).toBeVisible()
   await expect(page.locator('.operation-choice--subtract .operation-choice__check')).toBeHidden()
   await expect(page.locator('#operator-count-1 + span')).toHaveCSS('outline-style', 'solid')
@@ -251,6 +273,11 @@ test('keeps forced-color selection and focus states unambiguous', async ({ page 
 
   await page.locator('#operation-add').focus()
   await expect(page.locator('.operation-choice--add')).toHaveCSS('outline-style', 'solid')
+
+  await setQuestionCount(page, 1)
+  await page.getByRole('button', { name: /Start sprint/ }).click()
+  await expect(page.locator('.mascot-coach p')).toContainText('Numi')
+  await expect(page.locator('.numi--coach')).toBeHidden()
 })
 
 test('keeps mobile keypad focus and restart control deliberate', async ({ browser }) => {
@@ -354,10 +381,36 @@ test('publishes canonical social metadata and production-base assets', async ({ 
   const socialImage = await page.request.get(`${appPath}social-preview.png`)
   expect(socialImage.ok()).toBe(true)
   expect(socialImage.headers()['content-type']).toContain('image/png')
-  for (const asset of ['numi-mascot.svg', 'sprint-orbit.svg']) {
-    const response = await page.request.get(`${appPath}${asset}`)
+  const orbit = await page.request.get(`${appPath}sprint-orbit.svg`)
+  expect(orbit.ok()).toBe(true)
+  expect(orbit.headers()['content-type']).toContain('image/svg+xml')
+  let mascotBytes = 0
+  for (const asset of ['ready', 'thinking', 'encouraging', 'celebration']) {
+    const response = await page.request.get(`${appPath}numi/${asset}.webp`)
     expect(response.ok()).toBe(true)
-    expect(response.headers()['content-type']).toContain('image/svg+xml')
+    expect(response.headers()['content-type']).toContain('image/webp')
+    mascotBytes += (await response.body()).byteLength
+  }
+  expect(mascotBytes).toBeLessThanOrEqual(70 * 1_024)
+  expect(existsSync('public/numi-mascot.svg')).toBe(false)
+
+  const mascotIntegrity = await page.evaluate(async (base) => {
+    const poses = ['ready', 'thinking', 'encouraging', 'celebration']
+    return Promise.all(poses.map(async (pose) => {
+      const image = await createImageBitmap(await (await fetch(`${base}numi/${pose}.webp`)).blob())
+      const canvas = document.createElement('canvas')
+      canvas.width = image.width
+      canvas.height = image.height
+      const context = canvas.getContext('2d')!
+      context.drawImage(image, 0, 0)
+      const corners: Array<[number, number]> = [[0, 0], [image.width - 1, 0], [0, image.height - 1], [image.width - 1, image.height - 1]]
+      return { pose, width: image.width, height: image.height, cornerAlpha: corners.map(([x, y]) => context.getImageData(x, y, 1, 1).data[3]) }
+    }))
+  }, appPath)
+  for (const asset of mascotIntegrity) {
+    expect(asset.width).toBe(512)
+    expect(asset.height).toBe(512)
+    expect(asset.cornerAlpha).toEqual([0, 0, 0, 0])
   }
 })
 

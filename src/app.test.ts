@@ -4,7 +4,7 @@ import { MathTrainingApp } from './app'
 import { DEFAULT_CONFIG } from './math/engine'
 import { DEFAULT_PREFERENCES, type SharePayload } from './sprint/contracts'
 import type { ResultPage, ResultStore, ResultStoreWriteResult } from './sprint/results'
-import { advanceSession, createReviewSession, createTrainingSession, pauseSession, skipCurrentProblem } from './state/session'
+import { advanceSession, checkCurrentAnswer, createReviewSession, createTrainingSession, pauseSession, setCurrentDraft, skipCurrentProblem } from './state/session'
 import {
   APP_SCHEMA_VERSION,
   type PersistedAppState,
@@ -87,6 +87,7 @@ describe('MathTrainingApp lifecycle', () => {
 
     app.start()
     expect(document.activeElement).toBe(sentinel)
+    expect(document.querySelector<HTMLImageElement>('.numi--pose-ready')?.src).toContain('/numi/ready.webp')
     app.destroy()
   })
 
@@ -112,6 +113,7 @@ describe('MathTrainingApp lifecycle', () => {
     submitWrongAnswer()
     expect(document.querySelector('#app-announcer')).toBe(announcer)
     expect(announcer.textContent).toBe('Incorrect. Try again.')
+    expect(root.querySelector<HTMLImageElement>('.numi--pose-encouraging')?.src).toContain('/numi/encouraging.webp')
     submitWrongAnswer()
     expect(document.querySelector('#app-announcer')).toBe(announcer)
     expect(announcer.textContent).toBe('Incorrect. Try again.')
@@ -247,6 +249,7 @@ describe('MathTrainingApp lifecycle', () => {
     now = 4_000
     root.querySelector<HTMLButtonElement>('[data-action="skip"]')!.click()
     expect(root.textContent).toContain('20 seconds added to your scored time')
+    expect(root.querySelector<HTMLImageElement>('.numi--pose-encouraging')?.src).toContain('/numi/encouraging.webp')
     expect(root.textContent).toContain('100% complete')
     expect(root.querySelector('#question-time')?.textContent).toBe('00:03')
     expect(audio.play).toHaveBeenCalledWith('skip')
@@ -255,6 +258,7 @@ describe('MathTrainingApp lifecycle', () => {
       new SubmitEvent('submit', { bubbles: true, cancelable: true }),
     )
     expect(root.textContent).toContain('Session complete.')
+    expect(root.querySelector<HTMLImageElement>('.numi--completion.numi--pose-encouraging')?.src).toContain('/numi/encouraging.webp')
     expect(root.textContent).not.toContain('Perfect run!')
     expect(root.textContent).toContain('Scored time')
     expect(root.textContent).toContain('00:23')
@@ -331,11 +335,48 @@ describe('MathTrainingApp lifecycle', () => {
       const app = new MathTrainingApp(root, { store: createStore({ status: 'ok', state: makeReviewState(complete) }), resultStore, now: () => 3_000 })
       app.start()
       expect(root.textContent).toContain(complete ? 'Review complete.' : 'Mistake-to-mastery review')
+      if (complete) expect(root.querySelector<HTMLImageElement>('.numi--completion.numi--pose-encouraging')?.src).toContain('/numi/encouraging.webp')
       expect(resultStore.saveCompleted).not.toHaveBeenCalled()
       expect(resultStore.listRanked).not.toHaveBeenCalled()
       expect(resultStore.listCompleted).not.toHaveBeenCalled()
       app.destroy()
     }
+  })
+
+  it('celebrates a fully resolved mastery review', () => {
+    let source = createTrainingSession({ ...DEFAULT_CONFIG, problemCount: 1 }, 42, 1_000)
+    source = skipCurrentProblem(source, 1_100)
+    let review = createReviewSession(source, 2_000)!
+    review = setCurrentDraft(review, review.problems[0]!.answer)
+    review = checkCurrentAnswer(review, 2_100)
+    review = advanceSession(review, 2_200)
+    const state: PersistedAppState = { ...createPracticeState(), view: 'complete', session: review }
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store: createStore({ status: 'ok', state }), resultStore: createResultStore(), now: () => 3_000 })
+    app.start()
+    expect(root.textContent).toContain('Review complete.')
+    expect(root.querySelector<HTMLImageElement>('.numi--completion.numi--pose-celebration')?.src).toContain('/numi/celebration.webp')
+    expect(root.textContent).toContain('Every review question landed on the first try')
+    app.destroy()
+  })
+
+  it('encourages a resolved mastery review that still needed a retry', () => {
+    let source = createTrainingSession({ ...DEFAULT_CONFIG, problemCount: 1 }, 42, 1_000)
+    source = skipCurrentProblem(source, 1_100)
+    let review = createReviewSession(source, 2_000)!
+    const answer = review.problems[0]!.answer
+    review = setCurrentDraft(review, String(BigInt(answer) + 1n))
+    review = checkCurrentAnswer(review, 2_050)
+    review = setCurrentDraft(review, answer)
+    review = checkCurrentAnswer(review, 2_100)
+    review = advanceSession(review, 2_200)
+    const state: PersistedAppState = { ...createPracticeState(), view: 'complete', session: review }
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store: createStore({ status: 'ok', state }), resultStore: createResultStore(), now: () => 3_000 })
+    app.start()
+    expect(root.querySelector<HTMLImageElement>('.numi--completion.numi--pose-encouraging')?.src).toContain('/numi/encouraging.webp')
+    expect(root.textContent).toContain('You recovered every question')
+    app.destroy()
   })
 
   it('announces a delayed sprint-history failure after focused review has started', async () => {
