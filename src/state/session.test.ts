@@ -7,6 +7,7 @@ import {
   checkCurrentAnswer,
   clearCurrentDraft,
   createReviewSession,
+  createProblemReviewSession,
   createTrainingSession,
   deleteCurrentDigit,
   formatDuration,
@@ -158,7 +159,8 @@ describe('training session', () => {
     expect(review).not.toBeNull()
     expect(review?.mode).toBe('review')
     expect(review?.config.problemCount).toBe(3)
-    expect(review?.problems.map((problem) => problem.id)).toEqual(source.problems.slice(1).map((problem) => problem.id))
+    expect(review?.problems.map(({ operands, operators, answer }) => ({ operands, operators, answer }))).toEqual(source.problems.slice(1).map(({ operands, operators, answer }) => ({ operands, operators, answer })))
+    expect(new Set(review?.problems.map((problem) => problem.id)).size).toBe(3)
     expect(review?.problems[0]).not.toBe(source.problems[1])
     expect(review?.progress).toEqual(Array.from({ length: 3 }, () => ({
       draft: '', attempts: 0, status: 'pending', feedback: 'none', activeElapsedMs: 0,
@@ -174,12 +176,23 @@ describe('training session', () => {
     const restarted = restartReviewSession(review, 3_000)
 
     expect(restarted.id).not.toBe(review.id)
-    expect(restarted.problems).toEqual(review.problems)
+    expect(restarted.problems.map(({ operands, operators, answer }) => ({ operands, operators, answer }))).toEqual(review.problems.map(({ operands, operators, answer }) => ({ operands, operators, answer })))
     expect(restarted.problems[0]).not.toBe(review.problems[0])
     expect(restarted.progress[0]).toMatchObject({ status: 'pending', attempts: 0, draft: '' })
     expect(getPenaltyMs(skipCurrentProblem(restarted, 3_500))).toBe(0)
     expect(createReviewSession(review, 4_000)).toBeNull()
     expect(() => restartReviewSession(source, 4_000)).toThrow('Only review sessions')
+  })
+
+  it('builds validated unscored reviews from exact external problems', () => {
+    const config = { ...DEFAULT_CONFIG, problemCount: 2 }
+    const source = createTrainingSession(config, 42, 1_000)
+    const review = createProblemReviewSession(config, 42, source.problems, 2_000)
+    expect(review).toMatchObject({ mode: 'review', seed: 42, config: { problemCount: 2 }, timerStartedAt: 2_000 })
+    expect(new Set(review?.problems.map((problem) => problem.id)).size).toBe(2)
+    expect(createProblemReviewSession(config, 42, [], 2_000)).toBeNull()
+    expect(createProblemReviewSession(config, 42, [{ ...source.problems[0]!, answer: '999' }], 2_000)).toBeNull()
+    expect(createProblemReviewSession(config, -1, source.problems, 2_000)).toBeNull()
   })
 
   it('never subtracts time when the wall clock moves backward', () => {

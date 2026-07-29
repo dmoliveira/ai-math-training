@@ -11,11 +11,11 @@ import {
 
 describe('Sprint contracts', () => {
   it('uses privacy-friendly, autoplay-safe preference defaults', () => {
-    expect(DEFAULT_PREFERENCES).toEqual({ orientation: 'horizontal', audioEnabled: false, theme: 'forest', density: 'comfortable', autoAdvance: true })
+    expect(DEFAULT_PREFERENCES).toEqual({ orientation: 'horizontal', audioEnabled: false, theme: 'forest', density: 'comfortable', autoAdvance: true, hideTimers: false })
     expect(isPracticePreferences(DEFAULT_PREFERENCES)).toBe(true)
     expect(isPracticePreferences({ orientation: 'diagonal', audioEnabled: false })).toBe(false)
-    expect(parsePracticePreferences({ orientation: 'vertical', audioEnabled: true })).toEqual({ orientation: 'vertical', audioEnabled: true, theme: 'forest', density: 'comfortable', autoAdvance: true })
-    expect(parsePracticePreferences({ ...DEFAULT_PREFERENCES, theme: 'midnight', density: 'compact' })).toEqual({ orientation: 'horizontal', audioEnabled: false, theme: 'midnight', density: 'compact', autoAdvance: true })
+    expect(parsePracticePreferences({ orientation: 'vertical', audioEnabled: true })).toEqual({ orientation: 'vertical', audioEnabled: true, theme: 'forest', density: 'comfortable', autoAdvance: true, hideTimers: false })
+    expect(parsePracticePreferences({ ...DEFAULT_PREFERENCES, theme: 'midnight', density: 'compact' })).toEqual({ orientation: 'horizontal', audioEnabled: false, theme: 'midnight', density: 'compact', autoAdvance: true, hideTimers: false })
   })
 
   it('keeps legacy and Random history together while isolating fixed challenge levels', () => {

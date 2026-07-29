@@ -13,6 +13,7 @@ import {
   createSharePayload,
   createSprintResult,
   dailyStatistics,
+  isSprintResult,
   rankResults,
   type SprintResult,
 } from './results'
@@ -56,6 +57,26 @@ describe('Sprint results', () => {
 
   it('rejects incomplete sessions', () => {
     expect(createSprintResult(createTrainingSession(DEFAULT_CONFIG, 1, 0))).toBeNull()
+  })
+
+  it('rejects semantically inconsistent persisted result rows and aggregates', () => {
+    const mutations: Array<(result: SprintResult) => void> = [
+      (result) => { result.config.problemCount += 1 },
+      (result) => { result.totals.correct = 2 },
+      (result) => { result.totals.mistakes = 4 },
+      (result) => { result.totals.penaltyMs = 0; result.totals.scoredElapsedMs = result.totals.activeElapsedMs },
+      (result) => { result.rankEligible = false },
+      (result) => { result.problems[0]!.attempts = 0 },
+      (result) => { result.problems[1]!.penaltyMs = 0; result.problems[1]!.scoredElapsedMs! -= 20_000 },
+      (result) => { result.problems[0]!.operands[0] = '9'.repeat(10_000) },
+    ]
+
+    expect(isSprintResult(completedResult())).toBe(true)
+    for (const mutate of mutations) {
+      const result = structuredClone(completedResult())
+      mutate(result)
+      expect(isSprintResult(result)).toBe(false)
+    }
   })
 
   it('preserves legacy results while excluding them from rankings', () => {

@@ -1,4 +1,4 @@
-import { OPERATIONS, OPERATION_DETAILS, validateConfig, type Operation, type TrainingConfig } from '../math/engine'
+import { OPERATIONS, OPERATION_DETAILS, evaluateExpression, validateConfig, type Operation, type TrainingConfig } from '../math/engine'
 import {
   SKIP_PENALTY_MS,
   getPenaltyMs,
@@ -68,6 +68,7 @@ export interface ResultPage {
   results: SprintResult[]
   nextCursor: string | null
   corruptRecords: number
+  truncated: boolean
 }
 
 export interface ResultStore {
@@ -240,15 +241,35 @@ export function isSprintResult(value: unknown): value is SprintResult {
     totals.penaltyMs,
     totals.scoredElapsedMs,
   ]
+  if (
+    normalizedConfig === null ||
+    validateConfig(normalizedConfig).length > 0 ||
+    normalizedConfig.problemCount !== result.problems.length ||
+    !result.problems.every((problem) => isSprintProblemResult(problem) && problemMatchesConfig(problem, normalizedConfig)) ||
+    !numericTotals.every((item) => Number.isSafeInteger(item) && item >= 0)
+  ) return false
+  const problems = result.problems as SprintProblemResult[]
+  const correct = problems.filter((problem) => problem.outcome === 'correct').length
+  const skipped = problems.filter((problem) => problem.outcome === 'skipped').length
+  const revealed = problems.filter((problem) => problem.outcome === 'revealed').length
+  const firstTryCorrect = problems.filter((problem) => problem.outcome === 'correct' && problem.attempts === 1).length
+  const mistakes = problems.reduce((sum, problem) => sum + (problem.outcome === 'correct' ? problem.attempts - 1 : problem.outcome === 'revealed' ? problem.attempts + 1 : problem.attempts), 0)
+  const penaltyMs = problems.reduce((sum, problem) => safeAdd(sum, problem.penaltyMs), 0)
+  const exactTiming = result.timingQuality === 'exact'
+  const activeElapsedMs = exactTiming ? problems.reduce((sum, problem) => safeAdd(sum, problem.activeElapsedMs ?? 0), 0) : totals.activeElapsedMs
   return (
     result.id.length > 0 &&
+    result.id.length <= 200 &&
     result.sessionId.length > 0 &&
-    normalizedConfig !== null &&
-    validateConfig(normalizedConfig).length === 0 &&
+    result.sessionId.length <= 200 &&
     result.configKey === configKey(normalizedConfig) &&
-    result.problems.every(isSprintProblemResult) &&
-    numericTotals.every((item) => Number.isSafeInteger(item) && item >= 0) &&
-    totals.problems === result.problems.length &&
+    (exactTiming ? problems.every((problem) => problem.activeElapsedMs !== null) : problems.every((problem) => problem.activeElapsedMs === null)) &&
+    result.rankEligible === (exactTiming && revealed === 0) &&
+    totals.problems === problems.length &&
+    totals.correct === correct && totals.skipped === skipped && totals.revealed === revealed &&
+    totals.mistakes === mistakes && totals.firstTryCorrect === firstTryCorrect &&
+    totals.accuracyPercent === Math.round((firstTryCorrect / problems.length) * 100) &&
+    totals.activeElapsedMs === activeElapsedMs && totals.penaltyMs === penaltyMs &&
     totals.scoredElapsedMs === safeAdd(totals.activeElapsedMs, totals.penaltyMs)
   )
 }
@@ -285,15 +306,27 @@ function isSprintProblemResult(value: unknown): value is SprintProblemResult {
   if (typeof value !== 'object' || value === null) return false
   const problem = value as Partial<SprintProblemResult>
   return (
-    typeof problem.problemId === 'string' &&
-    Array.isArray(problem.operands) && problem.operands.every((item) => typeof item === 'string' && /^\d+$/.test(item)) &&
+    typeof problem.problemId === 'string' && problem.problemId.length <= 200 &&
+    Array.isArray(problem.operands) && problem.operands.length >= 2 && problem.operands.length <= 5 && problem.operands.every((item) => typeof item === 'string' && /^[1-9]\d{0,4}$/.test(item)) &&
     Array.isArray(problem.operators) && problem.operators.every((item) => OPERATIONS.includes(item)) &&
     (problem.outcome === 'correct' || problem.outcome === 'skipped' || problem.outcome === 'revealed') &&
     Number.isSafeInteger(problem.attempts) && problem.attempts! >= 0 &&
     (problem.activeElapsedMs === null || (Number.isSafeInteger(problem.activeElapsedMs) && problem.activeElapsedMs! >= 0)) &&
-    (problem.penaltyMs === 0 || problem.penaltyMs === SKIP_PENALTY_MS) &&
-    (problem.scoredElapsedMs === null || (Number.isSafeInteger(problem.scoredElapsedMs) && problem.scoredElapsedMs! >= 0))
+    (problem.outcome === 'correct' ? problem.attempts! >= 1 : true) &&
+    problem.penaltyMs === (problem.outcome === 'skipped' ? SKIP_PENALTY_MS : 0) &&
+    (problem.activeElapsedMs === null
+      ? problem.scoredElapsedMs === null
+      : problem.scoredElapsedMs === safeAdd(problem.activeElapsedMs!, problem.penaltyMs!))
   )
+}
+
+function problemMatchesConfig(problem: SprintProblemResult, config: TrainingConfig): boolean {
+  if (problem.operands.length !== config.operatorCount + 1 || problem.operators.length !== config.operatorCount) return false
+  if (!problem.operands.every((operand) => operand.length >= config.minDigits && operand.length <= config.maxDigits)) return false
+  if (!problem.operators.every((operation) => config.operations.includes(operation))) return false
+  const distinct = new Set(problem.operators).size
+  if (config.operationMode === 'same' ? distinct !== 1 : distinct < 2) return false
+  return evaluateExpression(problem.operands.map(BigInt), problem.operators) !== null
 }
 
 function safeAdd(left: number, right: number): number {

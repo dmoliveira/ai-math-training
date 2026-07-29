@@ -8,7 +8,7 @@ import {
   skipCurrentProblem,
 } from '../state/session'
 import { createSprintResult, type SprintResult } from '../sprint/results'
-import { IndexedDbResultStore } from './result-store'
+import { IndexedDbResultStore, MAX_CURSOR_SCAN_COUNT } from './result-store'
 
 let databaseSequence = 0
 
@@ -152,7 +152,47 @@ describe('IndexedDbResultStore', () => {
     expect(page).toMatchObject({ status: 'ok', results: [], corruptRecords: 2 })
     database.close()
   })
+
+  it('stops corrupted cursor traversal at an explicit scan budget', async () => {
+    const store = createStore()
+    const valid = resultAt(1_000, 1)
+    await store.saveCompleted(valid)
+    const database = await openDatabase(`result-store-test-${databaseSequence}`)
+    await insertMalformedResults(database, valid, MAX_CURSOR_SCAN_COUNT + 1)
+
+    const page = await store.listCompleted(valid.configKey)
+    expect(page).toMatchObject({
+      status: 'ok',
+      results: [],
+      corruptRecords: MAX_CURSOR_SCAN_COUNT,
+      truncated: true,
+    })
+    database.close()
+  })
 })
+
+function insertMalformedResults(database: IDBDatabase, template: SprintResult, count: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction('results', 'readwrite')
+    const store = transaction.objectStore('results')
+    store.delete(template.id)
+    for (let index = 0; index < count; index += 1) {
+      store.put({
+        id: `corrupt-${index}`,
+        sessionId: `corrupt-session-${index}`,
+        configKey: template.configKey,
+        completedAt: index + 1,
+        rankEligibleKey: 0,
+        scoredElapsedMs: 0,
+        mistakes: 0,
+        result: null,
+      })
+    }
+    transaction.oncomplete = () => resolve()
+    transaction.onabort = () => reject(transaction.error)
+    transaction.onerror = () => undefined
+  })
+}
 
 function openDatabase(name: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {

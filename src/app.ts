@@ -17,6 +17,7 @@ import {
   checkCurrentAnswer,
   clearCurrentDraft,
   createReviewSession,
+  createProblemReviewSession,
   createTrainingSession,
   deleteCurrentDigit,
   formatDuration,
@@ -36,6 +37,7 @@ import { SynthAudio } from './sprint/audio'
 import { BrowserShare, createSocialShareLinks } from './sprint/share'
 import { createSharePayload, createSprintResult, dailyStatistics, rankResults, type DailyStatistics, type ResultStore, type SprintResult } from './sprint/results'
 import { PRACTICE_PRESETS, deriveLearningMilestones, deriveNextMission, matchingPresetId, practicePreset } from './sprint/guidance'
+import { createSprintDebrief, selectHistoricalFocus, type DebriefItem } from './sprint/debrief'
 import { IndexedDbResultStore } from './storage/result-store'
 import { icon } from './ui/icons'
 import {
@@ -243,6 +245,9 @@ export class MathTrainingApp {
       case 'start-review':
         this.startReviewSession()
         break
+      case 'start-history-review':
+        this.startHistoricalReviewSession()
+        break
       case 'change-settings':
         this.changeSettings()
         break
@@ -254,6 +259,9 @@ export class MathTrainingApp {
         break
       case 'toggle-auto-advance':
         this.toggleAutoAdvance()
+        break
+      case 'toggle-timers':
+        this.toggleTimerVisibility()
         break
       case 'share-result':
         void this.shareCurrentResult(false)
@@ -280,7 +288,7 @@ export class MathTrainingApp {
     if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return
     if (!target.closest('#setup-form')) return
 
-    if (['orientation', 'audioEnabled', 'theme', 'density', 'autoAdvance'].includes(target.name)) {
+    if (['orientation', 'audioEnabled', 'theme', 'density', 'autoAdvance', 'hideTimers'].includes(target.name)) {
       const preferences = { ...this.state.preferences }
       if (target.name === 'orientation') {
         preferences.orientation = target.value === 'vertical' ? 'vertical' : 'horizontal'
@@ -294,6 +302,9 @@ export class MathTrainingApp {
       } else if (target.name === 'autoAdvance' && target instanceof HTMLInputElement) {
         preferences.autoAdvance = target.checked
         this.announce(`Automatic next question ${target.checked ? 'on' : 'off'}.`)
+      } else if (target.name === 'hideTimers' && target instanceof HTMLInputElement) {
+        preferences.hideTimers = target.checked
+        this.announce(`Live timers ${target.checked ? 'hidden' : 'shown'}.`)
       } else if (target instanceof HTMLInputElement) {
         preferences.audioEnabled = target.checked
         if (target.checked) void this.enableAudio()
@@ -743,6 +754,10 @@ export class MathTrainingApp {
                   <input id="auto-advance" type="checkbox" name="autoAdvance" ${checked(this.state.preferences.autoAdvance)} />
                   <span><strong>Move on after correct answers</strong><small>Shows success briefly, then opens the next question automatically. You can turn this off during a sprint.</small></span>
                 </label>
+                <label class="sound-option" for="hide-timers">
+                  <input id="hide-timers" type="checkbox" name="hideTimers" ${checked(this.state.preferences.hideTimers)} />
+                  <span><strong>Hide timers while solving</strong><small>Timing still records privately and appears in your debrief. This does not make the sprint untimed.</small></span>
+                </label>
               </div>
             </fieldset>
 
@@ -927,9 +942,10 @@ export class MathTrainingApp {
             </div>
           </div>
           <button class="auto-next-toggle" type="button" data-action="toggle-auto-advance" aria-pressed="${this.state.preferences.autoAdvance}"><span aria-hidden="true">${this.state.preferences.autoAdvance ? '⚡' : 'Ⅱ'}</span><span>Auto-next <strong>${this.state.preferences.autoAdvance ? 'On' : 'Off'}</strong></span></button>
+          <button class="timer-visibility-toggle" type="button" data-action="toggle-timers" aria-pressed="${this.state.preferences.hideTimers}"><span aria-hidden="true">${this.state.preferences.hideTimers ? '◌' : '◷'}</span><span>Timers <strong>${this.state.preferences.hideTimers ? 'Hidden' : 'Shown'}</strong></span></button>
           <dl class="session-metrics">
-            <div><dt>Session time</dt><dd id="elapsed-time">${formatDuration(getElapsedMs(session, this.now()))}</dd></div>
-            <div><dt>This question</dt><dd id="question-time">${questionElapsed === null ? '—' : formatDuration(questionElapsed)}</dd></div>
+            <div><dt>Session time</dt><dd id="elapsed-time">${this.state.preferences.hideTimers ? 'Hidden' : formatDuration(getElapsedMs(session, this.now()))}</dd></div>
+            <div><dt>This question</dt><dd id="question-time">${this.state.preferences.hideTimers ? 'Hidden' : questionElapsed === null ? '—' : formatDuration(questionElapsed)}</dd></div>
             <div><dt>${reviewing ? 'Extra attempts' : 'Mistakes'}</dt><dd>${session.mistakes}</dd></div>
           </dl>
         </section>
@@ -1042,7 +1058,6 @@ export class MathTrainingApp {
     const summary = summarizeSession(session, this.now())
     const perfect = summary.mistakes === 0 && summary.revealed === 0 && summary.skipped === 0
     const completionPose: NumiPose = perfect ? 'celebration' : 'encouraging'
-    const review = this.renderCompletionReview(session)
 
     return `
       <main id="main-content" class="page-shell completion-page">
@@ -1072,16 +1087,10 @@ export class MathTrainingApp {
             </div>
           </dl>
 
-          ${this.renderCompletionCoach(session)}
+          ${this.renderSprintDebrief(session)}
           ${this.renderLearningMilestones(session)}
           <div id="completion-ranking-host">${this.renderCompletionRanking(session)}</div>
-          ${review}
-          ${this.renderNextMission(session)}
           ${this.renderShareCard(session)}
-
-          <div class="completion-actions">
-            <button class="button button--secondary button--large" type="button" data-action="change-settings">Change settings</button>
-          </div>
           <p class="completion-note"><span aria-hidden="true">🌱</span> A little consistent practice makes big numbers feel smaller.</p>
         </section>
       </main>
@@ -1131,75 +1140,37 @@ export class MathTrainingApp {
     return `<section class="learning-milestones" aria-labelledby="milestones-heading"><p class="step-label">Milestones from this round</p><h2 id="milestones-heading">Progress worth noticing</h2><ul>${milestones.map((milestone) => `<li><span aria-hidden="true">✦</span><div><strong>${escapeHtml(milestone.title)}</strong><p>${escapeHtml(milestone.detail)}</p></div></li>`).join('')}</ul><p class="field-hint">Milestones describe this completed round; they are not streaks or points.</p></section>`
   }
 
-  private renderNextMission(session: TrainingSession): string {
+  private renderSprintDebrief(session: TrainingSession): string {
+    const debrief = createSprintDebrief(session)
+    if (!debrief) return ''
+    const hasFocus = debrief.focusItems.length > 0
     const mission = deriveNextMission(session)
-    if (!mission) return ''
-    const action = mission.kind === 'review'
-      ? '<button class="button button--primary button--large" type="button" data-action="start-review">Start exact review <span aria-hidden="true">→</span></button>'
-      : mission.kind === 'stretch'
+    const focus = debrief.focusItems[0]
+    const summary = hasFocus
+      ? `${debrief.firstTry} of ${debrief.total} answers were correct on the first try. ${debrief.focusItems.length} ${pluralize(debrief.focusItems.length, 'question')} may be useful to revisit.`
+      : `All ${debrief.total} answers were correct on the first try.`
+    const evidence = focus
+      ? this.renderDebriefFocus(focus)
+      : debrief.longest
+        ? `<div class="debrief-focus"><p class="step-label">Longest solve</p><strong aria-label="${escapeHtml(`${speakExpression(debrief.longest.problem)} equals ${debrief.longest.problem.answer}`)}">${escapeHtml(formatExpression(debrief.longest.problem))} = ${escapeHtml(debrief.longest.problem.answer)}</strong><span>Active time ${formatOptionalDuration(debrief.longest.activeElapsedMs)}</span></div>`
+        : ''
+    const primary = hasFocus
+      ? `<button class="button button--primary button--large" type="button" data-action="start-review">Review ${debrief.focusItems.length === 1 ? 'this question' : `these ${debrief.focusItems.length} questions`} <span aria-hidden="true">→</span></button>`
+      : mission?.kind === 'stretch'
         ? '<button class="button button--primary button--large" type="button" data-action="start-next-mission">Start one-step stretch <span aria-hidden="true">→</span></button>'
-        : '<button class="button button--primary button--large" type="button" data-action="practice-again">Repeat this setup <span aria-hidden="true">↻</span></button>'
-    return `<section class="next-mission" aria-labelledby="next-mission-heading"><div><p class="step-label">Recommended next mission</p><h2 id="next-mission-heading">${escapeHtml(mission.title)}</h2><p>${escapeHtml(mission.detail)}</p></div>${action}</section>`
+        : '<button class="button button--primary button--large" type="button" data-action="practice-again">Sprint again <span aria-hidden="true">↻</span></button>'
+    const sprintAgain = hasFocus || mission?.kind === 'stretch'
+      ? '<button class="button button--secondary button--large" type="button" data-action="practice-again">Sprint again</button>'
+      : ''
+    return `<section class="sprint-debrief" aria-labelledby="debrief-heading"><div class="debrief-summary"><div><p class="step-label">Your debrief</p><h2 id="debrief-heading">${hasFocus ? `Focus on ${debrief.focusItems.length} ${pluralize(debrief.focusItems.length, 'question')}` : 'Keep the rhythm'}</h2><p>${escapeHtml(summary)}</p>${hasFocus ? '<p class="field-hint">Review is optional, private, and unscored. Sprint again whenever you would rather keep moving.</p>' : mission ? `<p class="field-hint">${escapeHtml(mission.detail)}</p>` : ''}</div>${evidence}</div><div class="debrief-actions">${primary}${sprintAgain}<button class="button button--quiet button--large" type="button" data-action="change-settings">Change settings</button></div>${this.renderQuestionBreakdown(debrief.items)}</section>`
   }
 
-  private renderCompletionCoach(session: TrainingSession): string {
-    const difficult = session.progress.filter((item) => item.status === 'revealed' || item.status === 'skipped' || item.attempts > 1).length
-    const slowest = session.progress.reduce<{ index: number; elapsed: number } | null>((best, item, index) => {
-      if (item.activeElapsedMs === null || item.activeElapsedMs <= 0) return best
-      return !best || item.activeElapsedMs > best.elapsed ? { index, elapsed: item.activeElapsedMs } : best
-    }, null)
-    const slowestProblem = slowest ? session.problems[slowest.index] : null
-    const message = difficult > 0
-      ? `${difficult} ${pluralize(difficult, 'question')} took extra work. Use the focused review below to practise the same expressions while they are fresh.`
-      : slowestProblem
-        ? `No answers need correction. Your longest question was ${formatExpression(slowestProblem)} at ${formatDuration(slowest!.elapsed)}.`
-        : 'No answers need correction. Keep this setup for another sprint or increase the challenge when you are ready.'
-    return `<section class="training-insight" aria-labelledby="training-insight-heading"><p class="step-label">Training insight</p><h2 id="training-insight-heading">${difficult > 0 ? 'Turn effort into mastery' : 'A clean run worth repeating'}</h2><p>${escapeHtml(message)}</p></section>`
+  private renderDebriefFocus(item: DebriefItem): string {
+    return `<div class="debrief-focus debrief-focus--attention"><p class="step-label">Question ${item.index + 1} · Review focus</p><strong aria-label="${escapeHtml(`${speakExpression(item.problem)} equals ${item.problem.answer}`)}">${escapeHtml(formatExpression(item.problem))} = ${escapeHtml(item.problem.answer)}</strong><span>${escapeHtml(item.outcomeLabel)}</span><span>Active time ${formatOptionalDuration(item.activeElapsedMs)}</span></div>`
   }
 
-  private renderCompletionReview(session: TrainingSession): string {
-    const reviewItems = session.progress.flatMap((progress, index) => {
-      const problem = session.problems[index]
-      if (
-        !problem ||
-        (progress.status !== 'revealed' && progress.status !== 'skipped' && progress.attempts <= 1)
-      ) return []
-      const outcome =
-        progress.status === 'revealed'
-          ? 'Revealed'
-          : progress.status === 'skipped'
-            ? 'Skipped (+20s)'
-            : `${progress.attempts} attempts`
-      return [{ problem, outcome }]
-    })
-
-    if (reviewItems.length === 0) return ''
-
-    return `
-      <section class="completion-review" aria-labelledby="review-heading">
-        <div class="completion-review__heading">
-          <div>
-            <p class="step-label">Learn from the run</p>
-            <h2 id="review-heading">Review these questions</h2>
-          </div>
-          <span>${reviewItems.length} ${pluralize(reviewItems.length, 'question')}</span>
-        </div>
-        <ul class="review-list">
-          ${reviewItems
-            .map(
-              ({ problem, outcome }) => `
-                <li>
-                  <span class="review-expression" role="img" aria-label="${escapeHtml(`${speakExpression(problem)} equals ${problem.answer}`)}">
-                    <span aria-hidden="true">${escapeHtml(formatExpression(problem))} = <strong>${escapeHtml(problem.answer)}</strong></span>
-                  </span>
-                  <span class="review-outcome">${escapeHtml(outcome)}</span>
-                </li>`,
-            )
-            .join('')}
-        </ul>
-        <p class="field-hint">This focused review is unscored and will not affect your personal rankings or history.</p>
-      </section>
-    `
+  private renderQuestionBreakdown(items: readonly DebriefItem[]): string {
+    return `<details class="question-breakdown"><summary>Question breakdown (${items.length})</summary><ol>${items.map((item) => `<li><div><span class="step-label">Question ${item.index + 1}${item.reviewFocus ? ' · Review focus' : ''}</span><strong aria-label="${escapeHtml(`${speakExpression(item.problem)} equals ${item.problem.answer}`)}">${escapeHtml(formatExpression(item.problem))} = ${escapeHtml(item.problem.answer)}</strong></div><div class="breakdown-evidence"><span>${escapeHtml(item.outcomeLabel)}</span><span>Active time ${formatOptionalDuration(item.activeElapsedMs)}</span></div></li>`).join('')}</ol></details>`
   }
 
   private renderHistoryCard(): string {
@@ -1209,7 +1180,9 @@ export class MathTrainingApp {
     if (snapshot.status === 'error') return this.historyMessage('History is unavailable. Practice still works normally.', true)
     const rows = snapshot.results.length === 0 ? '<p>No completed results yet.</p>' : `<ol class="history-list">${snapshot.results.map((result) => `<li><time>${escapeHtml(formatResultDate(result.completedAt))}</time><strong>${formatDuration(result.totals.scoredElapsedMs)}</strong><span>${result.totals.accuracyPercent}% · ${result.totals.skipped} skipped</span></li>`).join('')}</ol>`
     const trend = snapshot.daily.length === 0 ? '<p>Complete a session to start your seven-day trend.</p>' : `<ul class="daily-stats">${snapshot.daily.map((day) => `<li><strong>${escapeHtml(day.date)}</strong><span>Best ${formatDuration(day.bestMs)}</span><span>Average ${formatDuration(day.averageMs)}</span><span>Median ${formatDuration(day.medianMs)}</span></li>`).join('')}</ul>`
-    return `<section class="history-card" aria-labelledby="history-heading"><p class="step-label">Private on this device</p><h2 id="history-heading">Performance history</h2><div class="history-scope"><strong>Exact setup</strong><span>${escapeHtml(formatConfigSummary(this.state.settings))}</span><small>Changing any setup choice starts a separate comparison group.</small></div>${trend}<h3>Full history</h3>${rows}<div class="history-actions">${snapshot.nextCursor ? '<button class="button button--secondary" type="button" data-action="load-history">Load more</button>' : ''}<button class="button button--quiet" type="button" data-action="show-reset" ${disabled(snapshot.results.length === 0)}>Reset this history</button></div></section>`
+    const historicalFocus = this.hasActiveSession() ? [] : selectHistoricalFocus(snapshot.results, this.state.settings)
+    const focusPractice = historicalFocus.length === 0 ? '' : `<aside class="history-focus"><div><p class="step-label">Private focus practice</p><h3>Revisit past questions</h3><p>${historicalFocus.length} ${pluralize(historicalFocus.length, 'question')} from this exact setup were previously retried, skipped, or revealed.</p></div><button class="button button--primary" type="button" data-action="start-history-review">Practice past focus questions</button></aside>`
+    return `<section class="history-card" aria-labelledby="history-heading"><p class="step-label">Private on this device</p><h2 id="history-heading">Performance history</h2><div class="history-scope"><strong>Exact setup</strong><span>${escapeHtml(formatConfigSummary(this.state.settings))}</span><small>Changing any setup choice starts a separate comparison group.</small></div>${trend}${focusPractice}<h3>Full history</h3>${rows}<div class="history-actions">${snapshot.nextCursor ? '<button class="button button--secondary" type="button" data-action="load-history">Load more</button>' : ''}<button class="button button--quiet" type="button" data-action="show-reset" ${disabled(snapshot.results.length === 0)}>Reset this history</button></div></section>`
   }
 
   private historyMessage(message: string, canReset = false): string {
@@ -1250,7 +1223,7 @@ export class MathTrainingApp {
     const [page, ranked, recent] = await Promise.all([this.resultStore.listCompleted(key, undefined, 25), this.resultStore.listRanked(key, 5), this.resultStore.listCompletedSince(key, since)])
     if (!this.started || generation !== this.historyGeneration) return
     const corruptRecords = page.corruptRecords + ranked.corruptRecords + recent.corruptRecords
-    if (page.status !== 'ok' || ranked.status !== 'ok' || recent.status !== 'ok' || corruptRecords > 0) {
+    if (page.status !== 'ok' || ranked.status !== 'ok' || recent.status !== 'ok' || page.truncated || ranked.truncated || recent.truncated || corruptRecords > 0) {
       this.history = { configKey: key, status: 'error', results: [], ranked: [], daily: [], nextCursor: null }
       if (corruptRecords > 0) this.announce('Some private history data could not be read. Reset this history to remove damaged records.')
     } else this.history = { configKey: key, status: 'ok', results: page.results, ranked: ranked.results, daily: dailyStatistics(recent.results, resolvedTimeZone()), nextCursor: page.nextCursor }
@@ -1263,7 +1236,7 @@ export class MathTrainingApp {
     const generation = ++this.historyGeneration
     const page = await this.resultStore.listCompleted(snapshot.configKey, snapshot.nextCursor, 25)
     if (!this.started || generation !== this.historyGeneration || page.status !== 'ok') return
-    if (page.corruptRecords > 0) {
+    if (page.corruptRecords > 0 || page.truncated) {
       this.history = { configKey: snapshot.configKey, status: 'error', results: [], ranked: [], daily: [], nextCursor: null }
       this.announce('Some private history data could not be read. Reset this history to remove damaged records.')
       this.syncHistorySurfaces()
@@ -1387,6 +1360,26 @@ export class MathTrainingApp {
     this.persist(true)
     this.render({ event: 'practice-enter' })
     this.announce(`Focused review started with ${review.problems.length} ${pluralize(review.problems.length, 'question')}. This round is unscored.`)
+    this.focusPracticeInput()
+  }
+
+  private startHistoricalReviewSession(): void {
+    const key = configKey(this.state.settings)
+    const snapshot = this.history?.configKey === key ? this.history : null
+    if (this.state.view !== 'setup' || this.hasActiveSession() || !snapshot || snapshot.status !== 'ok') return
+    const focus = selectHistoricalFocus(snapshot.results, this.state.settings)
+    if (focus.length === 0) return
+    const review = createProblemReviewSession(this.state.settings, this.createSeed(), focus.map((item) => item.problem), this.now())
+    if (!review) return
+    this.cancelAutoAdvance()
+    this.historyGeneration += 1
+    this.currentResult = null
+    this.history = null
+    this.state = { ...this.state, view: 'practice', session: review }
+    this.notice = null
+    this.persist(true)
+    this.render({ event: 'practice-enter' })
+    this.announce(`Private focus review started with ${review.problems.length} ${pluralize(review.problems.length, 'question')}. This round is unscored.`)
     this.focusPracticeInput()
   }
 
@@ -1549,6 +1542,15 @@ export class MathTrainingApp {
     window.requestAnimationFrame(() => this.root.querySelector<HTMLElement>('[data-action="toggle-auto-advance"]')?.focus())
     const session = this.state.session
     if (autoAdvance && session?.progress[session.currentIndex]?.status === 'correct') this.scheduleAutoAdvance(session)
+  }
+
+  private toggleTimerVisibility(): void {
+    const hideTimers = !this.state.preferences.hideTimers
+    this.state = { ...this.state, preferences: { ...this.state.preferences, hideTimers } }
+    this.persist(true)
+    this.render()
+    this.announce(`Live timers ${hideTimers ? 'hidden' : 'shown'}. Timing continues privately.`)
+    window.requestAnimationFrame(() => this.root.querySelector<HTMLElement>('[data-action="toggle-timers"]')?.focus())
   }
 
   private confirmReveal(): void {
@@ -1720,11 +1722,11 @@ export class MathTrainingApp {
 
   private updateTimerText(): void {
     const timer = this.root.querySelector<HTMLElement>('#elapsed-time')
-    if (timer && this.state.session) timer.textContent = formatDuration(getElapsedMs(this.state.session, this.now()))
+    if (timer && this.state.session) timer.textContent = this.state.preferences.hideTimers ? 'Hidden' : formatDuration(getElapsedMs(this.state.session, this.now()))
     const questionTimer = this.root.querySelector<HTMLElement>('#question-time')
     if (questionTimer && this.state.session) {
       const elapsed = getCurrentProblemElapsedMs(this.state.session, this.now())
-      questionTimer.textContent = elapsed === null ? '—' : formatDuration(elapsed)
+      questionTimer.textContent = this.state.preferences.hideTimers ? 'Hidden' : elapsed === null ? '—' : formatDuration(elapsed)
     }
   }
 
@@ -1962,6 +1964,10 @@ function completionPercent(session: TrainingSession | null): number {
   if (!session || session.problems.length === 0) return 0
   const complete = session.progress.filter((item) => item.status !== 'pending').length
   return Math.round((complete / session.problems.length) * 10_000) / 100
+}
+
+function formatOptionalDuration(value: number | null): string {
+  return value === null ? 'unavailable' : formatDuration(value)
 }
 
 function mascotMood(progress: TrainingSession['progress'][number]): string {

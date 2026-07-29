@@ -10,6 +10,7 @@ export interface PracticePreferences {
   theme: ThemePreference
   density: DensityPreference
   autoAdvance: boolean
+  hideTimers: boolean
 }
 
 export const DEFAULT_PREFERENCES: PracticePreferences = {
@@ -18,6 +19,7 @@ export const DEFAULT_PREFERENCES: PracticePreferences = {
   theme: 'forest',
   density: 'comfortable',
   autoAdvance: true,
+  hideTimers: false,
 }
 
 export type AudioCue =
@@ -79,7 +81,8 @@ export function parsePracticePreferences(value: unknown): PracticePreferences | 
     typeof candidate.audioEnabled !== 'boolean' ||
     (candidate.theme !== undefined && candidate.theme !== 'forest' && candidate.theme !== 'midnight') ||
     (candidate.density !== undefined && candidate.density !== 'comfortable' && candidate.density !== 'compact') ||
-    (candidate.autoAdvance !== undefined && typeof candidate.autoAdvance !== 'boolean')
+    (candidate.autoAdvance !== undefined && typeof candidate.autoAdvance !== 'boolean') ||
+    (candidate.hideTimers !== undefined && typeof candidate.hideTimers !== 'boolean')
   ) return null
   return {
     orientation: candidate.orientation,
@@ -87,6 +90,7 @@ export function parsePracticePreferences(value: unknown): PracticePreferences | 
     theme: candidate.theme === 'midnight' ? 'midnight' : 'forest',
     density: candidate.density === 'compact' ? 'compact' : 'comfortable',
     autoAdvance: candidate.autoAdvance !== false,
+    hideTimers: candidate.hideTimers === true,
   }
 }
 
@@ -94,5 +98,5 @@ export function isPracticePreferences(value: unknown): value is PracticePreferen
   const parsed = parsePracticePreferences(value)
   if (!parsed || typeof value !== 'object' || value === null) return false
   const candidate = value as Record<string, unknown>
-  return candidate.theme === parsed.theme && candidate.density === parsed.density && candidate.autoAdvance === parsed.autoAdvance
+  return candidate.theme === parsed.theme && candidate.density === parsed.density && candidate.autoAdvance === parsed.autoAdvance && candidate.hideTimers === parsed.hideTimers
 }
