@@ -32,10 +32,10 @@ test('navigates Practice and Progress with keyboard-friendly disclosures', async
   const summary = page.locator('#customize-setup > summary')
   await summary.focus()
   await summary.press('Enter')
-  await expect(page.locator('#customize-setup')).toHaveAttribute('open', '')
+  await expect(page.locator('#customize-setup')).toHaveJSProperty('open', true)
   const maxDigits = page.locator('#maxDigits')
   await maxDigits.selectOption('4')
-  await expect(page.locator('#customize-setup')).toHaveAttribute('open', '')
+  await expect(page.locator('#customize-setup')).toHaveJSProperty('open', true)
   await expect(maxDigits).toBeFocused()
 })
 
