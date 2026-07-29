@@ -9,6 +9,7 @@ export const SESSION_SCHEMA_VERSION = 2
 export const SKIP_PENALTY_MS = 20_000
 
 export type TimingQuality = 'exact' | 'legacy-partial'
+export type SessionMode = 'sprint' | 'review'
 export type ProblemStatus = 'pending' | 'correct' | 'skipped' | 'revealed'
 export type ProblemFeedback = 'none' | 'incorrect' | 'correct' | 'skipped' | 'revealed'
 
@@ -22,6 +23,7 @@ export interface ProblemProgress {
 
 export interface TrainingSession {
   schemaVersion: typeof SESSION_SCHEMA_VERSION
+  mode: SessionMode
   id: string
   config: TrainingConfig
   seed: number
@@ -58,6 +60,7 @@ export function createTrainingSession(config: TrainingConfig, seed: number, now:
   const problems = generateProblems(config, normalizedSeed)
   return {
     schemaVersion: SESSION_SCHEMA_VERSION,
+    mode: 'sprint',
     id: `session-${now}-${normalizedSeed}`,
     config: cloneConfig(config),
     seed: normalizedSeed,
@@ -78,6 +81,24 @@ export function createTrainingSession(config: TrainingConfig, seed: number, now:
     createdAt: now,
     completedAt: null,
   }
+}
+
+export function isDifficultProgress(progress: ProblemProgress): boolean {
+  return progress.status === 'skipped' || progress.status === 'revealed' || progress.attempts > 1
+}
+
+export function createReviewSession(source: TrainingSession, now: number): TrainingSession | null {
+  if (source.mode !== 'sprint') return null
+  const problems = source.problems.flatMap((problem, index) =>
+    source.progress[index] && isDifficultProgress(source.progress[index]!) ? [cloneProblem(problem)] : [],
+  )
+  if (problems.length === 0) return null
+  return createExactReviewSession(source, problems, now)
+}
+
+export function restartReviewSession(source: TrainingSession, now: number): TrainingSession {
+  if (source.mode !== 'review') throw new Error('Only review sessions can restart exact questions.')
+  return createExactReviewSession(source, source.problems.map(cloneProblem), now)
 }
 
 export function setCurrentDraft(session: TrainingSession, value: string): TrainingSession {
@@ -227,6 +248,7 @@ export function getCurrentProblemElapsedMs(session: TrainingSession, now: number
 }
 
 export function getPenaltyMs(session: TrainingSession): number {
+  if (session.mode === 'review') return 0
   const skipped = session.progress.filter((item) => item.status === 'skipped').length
   return Math.min(Number.MAX_SAFE_INTEGER, skipped * SKIP_PENALTY_MS)
 }
@@ -315,4 +337,34 @@ function replaceProgress(
 
 function cloneConfig(config: TrainingConfig): TrainingConfig {
   return { ...config, operations: [...config.operations] }
+}
+
+function cloneProblem(problem: Problem): Problem {
+  return { ...problem, operands: [...problem.operands], operators: [...problem.operators] }
+}
+
+function createExactReviewSession(source: TrainingSession, problems: Problem[], now: number): TrainingSession {
+  return {
+    schemaVersion: SESSION_SCHEMA_VERSION,
+    mode: 'review',
+    id: `review-${now}-${source.seed}`,
+    config: { ...cloneConfig(source.config), problemCount: problems.length },
+    seed: source.seed,
+    problems,
+    progress: problems.map(() => ({
+      draft: '',
+      attempts: 0,
+      status: 'pending',
+      feedback: 'none',
+      activeElapsedMs: 0,
+    })),
+    currentIndex: 0,
+    mistakes: 0,
+    elapsedMs: 0,
+    timerStartedAt: now,
+    currentProblemStartedAt: now,
+    timingQuality: 'exact',
+    createdAt: now,
+    completedAt: null,
+  }
 }

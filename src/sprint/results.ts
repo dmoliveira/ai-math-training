@@ -80,7 +80,7 @@ export interface ResultStore {
 }
 
 export function createSprintResult(session: TrainingSession): SprintResult | null {
-  if (session.completedAt === null || session.progress.some((item) => item.status === 'pending')) return null
+  if (session.mode === 'review' || session.completedAt === null || session.progress.some((item) => item.status === 'pending')) return null
 
   const problems: SprintProblemResult[] = []
   for (const [index, progress] of session.progress.entries()) {

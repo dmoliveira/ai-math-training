@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { DEFAULT_CONFIG } from '../math/engine'
 import { DEFAULT_PREFERENCES } from '../sprint/contracts'
-import { advanceSession, createTrainingSession, pauseSession, revealCurrentAnswer } from '../state/session'
+import { advanceSession, createReviewSession, createTrainingSession, pauseSession, revealCurrentAnswer, skipCurrentProblem } from '../state/session'
 import {
   APP_SCHEMA_VERSION,
   ProgressStore,
@@ -155,6 +155,27 @@ describe('progress store', () => {
     expect(new ProgressStore(storage).load().state?.preferences).toEqual(DEFAULT_PREFERENCES)
   })
 
+  it('normalizes missing session mode, round-trips review mode, and rejects unknown modes', () => {
+    const storage = new MemoryStorage()
+    const withoutMode = structuredClone(createState()) as unknown as { session: Record<string, unknown> }
+    delete withoutMode.session.mode
+    storage.values.set(V2_STORAGE_KEY, JSON.stringify(withoutMode))
+    expect(new ProgressStore(storage).load().state?.session?.mode).toBe('sprint')
+
+    const state = createState()
+    if (!state.session) return
+    const source = skipCurrentProblem(state.session, 1_100)
+    state.session = createReviewSession(source, 2_000)
+    expect(state.session).not.toBeNull()
+    expect(new ProgressStore(storage).save(state, 2_500)).toBe(true)
+    expect(new ProgressStore(storage).load().state?.session).toMatchObject({ mode: 'review', timerStartedAt: null })
+
+    const invalid = structuredClone(state) as unknown as { session: Record<string, unknown> }
+    invalid.session.mode = 'challenge'
+    storage.values.set(V2_STORAGE_KEY, JSON.stringify(invalid))
+    expect(new ProgressStore(storage).load()).toEqual({ status: 'invalid', state: null })
+  })
+
   it('reports unavailable or throwing storage without breaking practice', () => {
     const unavailable = new ProgressStore(null)
     expect(unavailable.load()).toEqual({ status: 'unavailable', state: null })
@@ -211,6 +232,7 @@ describe('progress store', () => {
     expect(loaded.status).toBe('ok')
     expect(loaded.state?.preferences).toEqual(DEFAULT_PREFERENCES)
     expect(loaded.state?.session).toMatchObject({
+      mode: 'sprint',
       timingQuality: 'legacy-partial',
       elapsedMs: 3_000,
       timerStartedAt: null,

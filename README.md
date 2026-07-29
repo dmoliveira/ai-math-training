@@ -24,6 +24,7 @@ A fast, private browser game for sharpening mental arithmetic. Configure a sprin
 | 🔀 | **Same or mixed** | Repeat one operation or combine selected operations with standard precedence. |
 | ⌨️ | **Keyboard first** | Use a keyboard, number pad, or the accessible on-screen keypad. |
 | ✅ | **Helpful feedback** | Retry mistakes, reveal one answer, and review missed questions at the end. |
+| ↺ | **Mistake-to-mastery reviews** | Retry the exact questions that took extra work in a resumable, unscored review round. |
 | ⏱️ | **Sprint results** | See active and scored time, skips, first-try accuracy, rankings, and seven-day trends. |
 | 🔒 | **Private by default** | Settings and active progress use versioned `localStorage`; completed history uses IndexedDB. There are no accounts or trackers. |
 | ♿ | **Accessible and responsive** | Semantic controls, visible focus, reduced motion, and layouts tested from 320px upward. |
@@ -32,10 +33,11 @@ A fast, private browser game for sharpening mental arithmetic. Configure a sprin
 
 1. **Build a session** — choose a minimum and maximum digit count, operations, operators per question, pattern, and question total.
 2. **Solve each expression** — type an answer or use the on-screen keypad, then press <kbd>Enter</kbd>.
-3. **Review your run** — compare scored time, top-five results, daily statistics, and private on-device history.
-4. **Share if you choose** — use native sharing, copy, or ordinary social links. Sharing never happens automatically.
+3. **Review your run** — use the training insight, compare exact-setup history, and revisit questions that needed retries, skips, or reveals.
+4. **Master difficult questions** — launch an unscored review containing those exact expressions; review progress can be saved and resumed without affecting rankings.
+5. **Share if you choose** — use native sharing, copy, or ordinary social links. Sharing never happens automatically.
 
-Your active session is restored after a refresh. **Save & exit** pauses the timer and keeps your exact place on this device.
+Your active sprint or review is restored after a refresh. **Save & exit** pauses the timer and keeps your exact place on this device. Review rounds stay in `localStorage` for resume but are never written to scored history.
 
 ### Keyboard controls ⌨️
 

@@ -15,6 +15,7 @@ import {
   appendCurrentDigit,
   checkCurrentAnswer,
   clearCurrentDraft,
+  createReviewSession,
   createTrainingSession,
   deleteCurrentDigit,
   formatDuration,
@@ -22,6 +23,7 @@ import {
   getElapsedMs,
   pauseSession,
   resumeSession,
+  restartReviewSession,
   revealCurrentAnswer,
   setCurrentDraft,
   skipCurrentProblem,
@@ -114,7 +116,7 @@ export class MathTrainingApp {
     this.started = true
 
     this.restore(this.store.load())
-    if (this.state.session?.completedAt !== null && this.state.session) this.currentResult = createSprintResult(this.state.session)
+    if (this.state.session?.completedAt !== null && this.state.session?.mode === 'sprint') this.currentResult = createSprintResult(this.state.session)
     this.applyAppearance()
     if (!this.announcer.isConnected) this.root.insertAdjacentElement('afterend', this.announcer)
     this.root.addEventListener('click', this.handleClick)
@@ -128,7 +130,7 @@ export class MathTrainingApp {
 
     this.render()
     if (this.currentResult) void this.persistCompletedResult(this.currentResult)
-    else void this.refreshHistory()
+    else if (!(this.state.view !== 'setup' && this.state.session?.mode === 'review')) void this.refreshHistory()
     if (this.state.view !== 'setup') this.focusCurrentView()
   }
 
@@ -206,6 +208,9 @@ export class MathTrainingApp {
         break
       case 'practice-again':
         this.restartSession()
+        break
+      case 'start-review':
+        this.startReviewSession()
         break
       case 'change-settings':
         this.changeSettings()
@@ -482,10 +487,11 @@ export class MathTrainingApp {
   }
 
   private renderHeader(): string {
+    const reviewing = this.state.session?.mode === 'review'
     const practiceActions =
       this.state.view === 'practice'
         ? `<div class="header-actions">
-            <button class="button button--quiet button--compact restart-action" type="button" data-action="open-restart" aria-label="Restart session">
+            <button class="button button--quiet button--compact restart-action" type="button" data-action="open-restart" aria-label="Restart ${reviewing ? 'review' : 'session'}">
               <span class="restart-action__icon" aria-hidden="true">↻</span><span class="restart-action__label">Restart</span>
             </button>
             <button class="button button--secondary button--compact" type="button" data-action="save-exit">
@@ -681,13 +687,14 @@ export class MathTrainingApp {
 
   private renderResumeCard(session: TrainingSession): string {
     const summary = summarizeSession(session, this.now())
+    const reviewing = session.mode === 'review'
     return `
       <aside class="resume-card" aria-labelledby="resume-title">
         <div class="resume-card__icon" aria-hidden="true">▶</div>
         <div class="resume-card__copy">
-          <p class="step-label">Saved on this device</p>
-          <h2 id="resume-title">Continue your session</h2>
-          <p>Question ${session.currentIndex + 1} of ${session.problems.length} · ${summary.mistakes} ${pluralize(summary.mistakes, 'mistake')} · ${formatDuration(summary.elapsedMs)}</p>
+          <p class="step-label">${reviewing ? 'Unscored review saved' : 'Saved on this device'}</p>
+          <h2 id="resume-title">Continue your ${reviewing ? 'review' : 'session'}</h2>
+          <p>Question ${session.currentIndex + 1} of ${session.problems.length} · ${summary.mistakes} ${pluralize(summary.mistakes, reviewing ? 'extra attempt' : 'mistake')} · ${formatDuration(summary.elapsedMs)}</p>
         </div>
         <div class="resume-card__actions">
           <button class="button button--primary button--compact" type="button" data-action="resume-session">Resume</button>
@@ -800,10 +807,12 @@ export class MathTrainingApp {
     const progressValue = session.progress.filter((item) => item.status !== 'pending').length
     const percent = Math.round((progressValue / session.problems.length) * 100)
     const questionElapsed = getCurrentProblemElapsedMs(session, this.now())
+    const reviewing = session.mode === 'review'
 
     return `
       <main id="main-content" class="page-shell practice-page">
         <section class="session-toolbar" aria-label="Session progress">
+          ${reviewing ? '<p class="review-mode-badge"><span aria-hidden="true">↺</span> Mistake-to-mastery review · Unscored</p>' : ''}
           <div class="progress-copy">
             <span>Question <strong>${session.currentIndex + 1}</strong> of ${session.problems.length} · ${percent}% complete</span>
             <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="${session.problems.length}" aria-valuenow="${progressValue}" aria-label="Session completion" aria-valuetext="${progressValue} of ${session.problems.length} questions complete, ${percent} percent">
@@ -813,7 +822,7 @@ export class MathTrainingApp {
           <dl class="session-metrics">
             <div><dt>Session time</dt><dd id="elapsed-time">${formatDuration(getElapsedMs(session, this.now()))}</dd></div>
             <div><dt>This question</dt><dd id="question-time">${questionElapsed === null ? '—' : formatDuration(questionElapsed)}</dd></div>
-            <div><dt>Mistakes</dt><dd>${session.mistakes}</dd></div>
+            <div><dt>${reviewing ? 'Extra attempts' : 'Mistakes'}</dt><dd>${session.mistakes}</dd></div>
           </dl>
         </section>
 
@@ -824,7 +833,7 @@ export class MathTrainingApp {
                 item.status === 'correct'
                   ? 'correct'
                   : item.status === 'skipped'
-                    ? 'skipped, 20-second penalty'
+                    ? reviewing ? 'skipped' : 'skipped, 20-second penalty'
                     : item.status === 'revealed'
                     ? 'revealed'
                     : index === session.currentIndex
@@ -837,7 +846,7 @@ export class MathTrainingApp {
 
         <article class="practice-card" aria-labelledby="problem-heading">
           <div class="problem-panel">
-            <p class="step-label">Question ${session.currentIndex + 1}</p>
+            <p class="step-label">${reviewing ? 'Review question' : 'Question'} ${session.currentIndex + 1}</p>
             <h1 id="problem-heading" class="problem-heading" tabindex="-1">Solve the expression</h1>
             ${renderExpression(problem, this.state.preferences.orientation)}
 
@@ -864,17 +873,17 @@ export class MathTrainingApp {
               </div>
               <p id="answer-help" class="answer-help">Type, use the keypad, or press <kbd>Enter</kbd> to check. <kbd>−</kbd> deletes; <kbd>×</kbd> clears.</p>
               <div id="answer-feedback" class="answer-feedback answer-feedback--${progress.feedback}">
-                ${feedbackMarkup(progress.feedback, problem.answer)}
+                ${feedbackMarkup(progress.feedback, problem.answer, reviewing)}
               </div>
 
               <div class="practice-actions">
                 <button id="primary-action" class="button button--primary button--large" type="submit" ${disabled(!locked && progress.draft === '')}>
-                  ${locked ? (isLast ? 'See results' : 'Next question') : 'Check answer'} <span aria-hidden="true">${locked ? '→' : '✓'}</span>
+                  ${locked ? (isLast ? (reviewing ? 'Finish review' : 'See results') : 'Next question') : 'Check answer'} <span aria-hidden="true">${locked ? '→' : '✓'}</span>
                 </button>
                 ${
                   locked
                     ? ''
-                    : '<div class="secondary-actions"><button class="button button--quiet" type="button" data-action="open-reveal">Reveal answer</button><button class="button button--quiet" type="button" data-action="skip">Skip question (+20s)</button></div>'
+                    : `<div class="secondary-actions"><button class="button button--quiet" type="button" data-action="open-reveal">Reveal answer</button><button class="button button--quiet" type="button" data-action="skip">Skip question${reviewing ? '' : ' (+20s)'}</button></div>`
                 }
               </div>
             </form>
@@ -909,10 +918,10 @@ export class MathTrainingApp {
         )}
         ${dialogMarkup(
           'restart-dialog',
-          'Restart this session?',
-          'Your current answers and time will be replaced with new questions using the same settings.',
+          `Restart this ${reviewing ? 'review' : 'session'}?`,
+          reviewing ? 'Your answers and time will reset, but these exact review questions will stay.' : 'Your current answers and time will be replaced with new questions using the same settings.',
           'Keep practising',
-          'Restart session',
+          reviewing ? 'Restart review' : 'Restart session',
           'confirm-restart',
           true,
         )}
@@ -921,6 +930,7 @@ export class MathTrainingApp {
   }
 
   private renderCompletion(session: TrainingSession): string {
+    if (session.mode === 'review') return this.renderReviewCompletion(session)
     const summary = summarizeSession(session, this.now())
     const perfect = summary.mistakes === 0 && summary.revealed === 0 && summary.skipped === 0
     const review = this.renderCompletionReview(session)
@@ -953,6 +963,7 @@ export class MathTrainingApp {
             </div>
           </dl>
 
+          ${this.renderCompletionCoach(session)}
           <div id="completion-ranking-host">${this.renderCompletionRanking(session)}</div>
           ${review}
           ${this.renderShareCard(session)}
@@ -965,6 +976,56 @@ export class MathTrainingApp {
         </section>
       </main>
     `
+  }
+
+  private renderReviewCompletion(session: TrainingSession): string {
+    const summary = summarizeSession(session, this.now())
+    const firstTry = session.progress.filter((item) => item.status === 'correct' && item.attempts === 1).length
+    const corrected = session.progress.filter((item) => item.status === 'correct' && item.attempts > 1).length
+    const unresolved = session.progress.filter((item) => item.status === 'skipped' || item.status === 'revealed').length
+    const coaching = unresolved > 0
+      ? `${unresolved} ${pluralize(unresolved, 'question')} still need attention. Review the answers, then try this same set once more.`
+      : corrected > 0
+        ? `You recovered every question. Repeat the set once more and aim for ${session.problems.length} first-try answers.`
+        : 'Every review question landed on the first try. Return to a sprint and carry that confidence forward.'
+    return `
+      <main id="main-content" class="page-shell completion-page review-completion-page">
+        <section class="completion-card" aria-labelledby="completion-heading">
+          <img class="numi numi--completion" src="${import.meta.env.BASE_URL}numi-mascot.svg" alt="" width="320" height="320" aria-hidden="true" />
+          <p class="eyebrow"><span aria-hidden="true">↺</span> Unscored mastery round</p>
+          <h1 id="completion-heading" tabindex="-1">Review complete.</h1>
+          <p class="completion-lede">You revisited the exact questions that slowed you down. That focused repetition is where fluency grows.</p>
+          <dl class="results-grid results-grid--review">
+            <div class="result-card result-card--primary"><dt>First-try mastered</dt><dd>${firstTry}<small>of ${summary.total} review questions</small></dd></div>
+            <div class="result-card"><dt>Corrected after retry</dt><dd>${corrected}<small>worked through successfully</small></dd></div>
+            <div class="result-card"><dt>Still unresolved</dt><dd>${unresolved}<small>skipped or revealed</small></dd></div>
+            <div class="result-card"><dt>Active review time</dt><dd>${formatDuration(summary.elapsedMs)}<small>unscored practice</small></dd></div>
+          </dl>
+          <section class="training-insight training-insight--review" aria-labelledby="review-coaching-heading">
+            <p class="step-label">Your next move</p><h2 id="review-coaching-heading">Keep the learning loop going</h2><p>${escapeHtml(coaching)}</p>
+          </section>
+          <div class="completion-actions">
+            <button class="button button--primary button--large" type="button" data-action="practice-again">Review again <span aria-hidden="true">↻</span></button>
+            <button class="button button--secondary button--large" type="button" data-action="change-settings">Start another sprint</button>
+          </div>
+          <p class="completion-note"><span aria-hidden="true">🔒</span> Review rounds stay resumable on this device but never affect rankings or history.</p>
+        </section>
+      </main>`
+  }
+
+  private renderCompletionCoach(session: TrainingSession): string {
+    const difficult = session.progress.filter((item) => item.status === 'revealed' || item.status === 'skipped' || item.attempts > 1).length
+    const slowest = session.progress.reduce<{ index: number; elapsed: number } | null>((best, item, index) => {
+      if (item.activeElapsedMs === null || item.activeElapsedMs <= 0) return best
+      return !best || item.activeElapsedMs > best.elapsed ? { index, elapsed: item.activeElapsedMs } : best
+    }, null)
+    const slowestProblem = slowest ? session.problems[slowest.index] : null
+    const message = difficult > 0
+      ? `${difficult} ${pluralize(difficult, 'question')} took extra work. Use the focused review below to practise the same expressions while they are fresh.`
+      : slowestProblem
+        ? `No answers need correction. Your longest question was ${formatExpression(slowestProblem)} at ${formatDuration(slowest!.elapsed)}.`
+        : 'No answers need correction. Keep this setup for another sprint or increase the challenge when you are ready.'
+    return `<section class="training-insight" aria-labelledby="training-insight-heading"><p class="step-label">Training insight</p><h2 id="training-insight-heading">${difficult > 0 ? 'Turn effort into mastery' : 'A clean run worth repeating'}</h2><p>${escapeHtml(message)}</p></section>`
   }
 
   private renderCompletionReview(session: TrainingSession): string {
@@ -1007,6 +1068,8 @@ export class MathTrainingApp {
             )
             .join('')}
         </ul>
+        <button class="button button--primary" type="button" data-action="start-review">Practice these exact questions <span aria-hidden="true">→</span></button>
+        <p class="field-hint">This focused review is unscored and will not affect your personal rankings or history.</p>
       </section>
     `
   }
@@ -1018,7 +1081,7 @@ export class MathTrainingApp {
     if (snapshot.status === 'error') return this.historyMessage('History is unavailable. Practice still works normally.', true)
     const rows = snapshot.results.length === 0 ? '<p>No completed results yet.</p>' : `<ol class="history-list">${snapshot.results.map((result) => `<li><time>${escapeHtml(formatResultDate(result.completedAt))}</time><strong>${formatDuration(result.totals.scoredElapsedMs)}</strong><span>${result.totals.accuracyPercent}% · ${result.totals.skipped} skipped</span></li>`).join('')}</ol>`
     const trend = snapshot.daily.length === 0 ? '<p>Complete a session to start your seven-day trend.</p>' : `<ul class="daily-stats">${snapshot.daily.map((day) => `<li><strong>${escapeHtml(day.date)}</strong><span>Best ${formatDuration(day.bestMs)}</span><span>Average ${formatDuration(day.averageMs)}</span><span>Median ${formatDuration(day.medianMs)}</span></li>`).join('')}</ul>`
-    return `<section class="history-card" aria-labelledby="history-heading"><p class="step-label">Private on this device</p><h2 id="history-heading">Performance history</h2>${trend}<h3>Full history</h3>${rows}<div class="history-actions">${snapshot.nextCursor ? '<button class="button button--secondary" type="button" data-action="load-history">Load more</button>' : ''}<button class="button button--quiet" type="button" data-action="show-reset" ${disabled(snapshot.results.length === 0)}>Reset this history</button></div></section>`
+    return `<section class="history-card" aria-labelledby="history-heading"><p class="step-label">Private on this device</p><h2 id="history-heading">Performance history</h2><div class="history-scope"><strong>Exact setup</strong><span>${escapeHtml(formatConfigSummary(this.state.settings))}</span><small>Changing any setup choice starts a separate comparison group.</small></div>${trend}<h3>Full history</h3>${rows}<div class="history-actions">${snapshot.nextCursor ? '<button class="button button--secondary" type="button" data-action="load-history">Load more</button>' : ''}<button class="button button--quiet" type="button" data-action="show-reset" ${disabled(snapshot.results.length === 0)}>Reset this history</button></div></section>`
   }
 
   private historyMessage(message: string, canReset = false): string {
@@ -1037,13 +1100,16 @@ export class MathTrainingApp {
   private async persistCompletedResult(result: SprintResult): Promise<void> {
     const generation = ++this.historyGeneration
     const write = await this.resultStore.saveCompleted(result)
-    if (!this.started || generation !== this.historyGeneration) return
+    if (!this.started) return
     if (write.status !== 'saved' && write.status !== 'duplicate') {
-      this.history = { configKey: result.configKey, status: 'error', results: [], ranked: [], daily: [], nextCursor: null }
-      this.syncHistorySurfaces()
+      if (generation === this.historyGeneration) {
+        this.history = { configKey: result.configKey, status: 'error', results: [], ranked: [], daily: [], nextCursor: null }
+        this.syncHistorySurfaces()
+      }
       this.announce('This result could not be saved to private history. Your completed session is still available now.')
       return
     }
+    if (generation !== this.historyGeneration) return
     await this.refreshHistory(result.config)
   }
 
@@ -1146,16 +1212,37 @@ export class MathTrainingApp {
   }
 
   private restartSession(): void {
-    const config = this.state.session?.config ?? this.state.settings
+    const current = this.state.session
+    const config = current?.config ?? this.state.settings
+    const session = current?.mode === 'review'
+      ? restartReviewSession(current, this.now())
+      : createTrainingSession(config, this.createSeed(), this.now())
+    this.currentResult = null
     this.state = {
       ...this.state,
       view: 'practice',
-      settings: cloneConfig(config),
-      session: createTrainingSession(config, this.createSeed(), this.now()),
+      settings: current?.mode === 'review' ? this.state.settings : cloneConfig(config),
+      session,
     }
     this.notice = null
     this.persist(true)
     this.render()
+    this.focusPracticeInput()
+  }
+
+  private startReviewSession(): void {
+    const source = this.state.session
+    if (!source || source.mode !== 'sprint' || source.completedAt === null) return
+    const review = createReviewSession(source, this.now())
+    if (!review) return
+    this.historyGeneration += 1
+    this.currentResult = null
+    this.history = null
+    this.state = { ...this.state, view: 'practice', session: review }
+    this.notice = null
+    this.persist(true)
+    this.render()
+    this.announce(`Focused review started with ${review.problems.length} ${pluralize(review.problems.length, 'question')}. This round is unscored.`)
     this.focusPracticeInput()
   }
 
@@ -1195,6 +1282,7 @@ export class MathTrainingApp {
 
   private discardSession(): void {
     this.suspendAudio()
+    this.currentResult = null
     this.state = { ...this.state, view: 'setup', session: null }
     this.notice = { message: 'Saved session discarded. Your settings are still here.', tone: 'info' }
     this.persist(true)
@@ -1205,6 +1293,7 @@ export class MathTrainingApp {
 
   private changeSettings(): void {
     this.suspendAudio()
+    this.currentResult = null
     this.state = { ...this.state, view: 'setup', session: null }
     this.notice = null
     this.persist(true)
@@ -1257,7 +1346,7 @@ export class MathTrainingApp {
       session: advanced,
     }
     if (advanced.completedAt !== null && session.completedAt === null) {
-      this.currentResult = createSprintResult(advanced)
+      this.currentResult = advanced.mode === 'sprint' ? createSprintResult(advanced) : null
       if (this.currentResult) {
         this.historyGeneration += 1
         this.history = { configKey: this.currentResult.configKey, status: 'loading', results: [], ranked: [], daily: [], nextCursor: null }
@@ -1265,7 +1354,7 @@ export class MathTrainingApp {
     }
     this.persist(true)
     this.render()
-    if (this.currentResult && advanced.completedAt !== null && session.completedAt === null) void this.persistCompletedResult(this.currentResult)
+    if (this.currentResult && advanced.mode === 'sprint' && advanced.completedAt !== null && session.completedAt === null) void this.persistCompletedResult(this.currentResult)
     this.focusCurrentView()
   }
 
@@ -1292,7 +1381,8 @@ export class MathTrainingApp {
     this.persist(true)
     this.render()
     const isLast = skipped.currentIndex === skipped.problems.length - 1
-    this.announce(`Question skipped. 20 seconds added. ${isLast ? 'See your results.' : 'Next question.'}`)
+    const reviewMessage = session.mode === 'review' ? ' It stays in this unscored review.' : ' 20 seconds added.'
+    this.announce(`Question skipped.${reviewMessage} ${isLast ? (session.mode === 'review' ? 'Finish your review.' : 'See your results.') : 'Next question.'}`)
     document.getElementById('primary-action')?.focus()
   }
 
@@ -1544,7 +1634,7 @@ function renderExpression(
   `
 }
 
-function feedbackMarkup(feedback: string, answer: string): string {
+function feedbackMarkup(feedback: string, answer: string, reviewing = false): string {
   if (feedback === 'incorrect') {
     return '<span class="feedback-icon" aria-hidden="true">×</span><span><strong>Not quite.</strong> Check the expression and try again.</span>'
   }
@@ -1552,7 +1642,7 @@ function feedbackMarkup(feedback: string, answer: string): string {
     return '<span class="feedback-icon" aria-hidden="true">✓</span><span><strong>Correct.</strong> Nice work — keep going.</span>'
   }
   if (feedback === 'skipped') {
-    return '<span class="feedback-icon" aria-hidden="true">—</span><span><strong>Skipped.</strong> 20 seconds added to your scored time.</span>'
+    return `<span class="feedback-icon" aria-hidden="true">—</span><span><strong>Skipped.</strong> ${reviewing ? 'Keep it in your next review round.' : '20 seconds added to your scored time.'}</span>`
   }
   if (feedback === 'revealed') {
     return `<span class="feedback-icon" aria-hidden="true">i</span><span><strong>Answer revealed:</strong> ${escapeHtml(answer)}</span>`
@@ -1624,6 +1714,11 @@ function digitRangeShort(config: TrainingConfig): string {
   return config.minDigits === config.maxDigits
     ? `${config.minDigits}-digit`
     : `${config.minDigits}–${config.maxDigits} digits`
+}
+
+function formatConfigSummary(config: TrainingConfig): string {
+  const operations = config.operations.map((operation) => OPERATION_DETAILS[operation].shortLabel).join(', ')
+  return `${config.problemCount} ${pluralize(config.problemCount, 'question')} · ${digitRangeShort(config)} · ${config.operatorCount} ${pluralize(config.operatorCount, 'operator')} · ${config.operationMode === 'mixed' ? 'Mixed' : 'Same'} · ${operations}`
 }
 
 function formatNumber(value: number): string {

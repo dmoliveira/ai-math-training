@@ -6,6 +6,7 @@ import {
   appendCurrentDigit,
   checkCurrentAnswer,
   clearCurrentDraft,
+  createReviewSession,
   createTrainingSession,
   deleteCurrentDigit,
   formatDuration,
@@ -16,6 +17,7 @@ import {
   normalizeAnswer,
   pauseSession,
   resumeSession,
+  restartReviewSession,
   revealCurrentAnswer,
   setCurrentDraft,
   skipCurrentProblem,
@@ -132,6 +134,52 @@ describe('training session', () => {
       penaltyMs: 20_000,
       scoredElapsedMs: 20_400,
     })
+  })
+
+  it('builds an exact review from corrected, skipped, and revealed questions in source order', () => {
+    const config = { ...DEFAULT_CONFIG, problemCount: 4 }
+    let source = createTrainingSession(config, 77, 1_000)
+    const first = source.problems[0]!
+    const second = source.problems[1]!
+
+    source = setCurrentDraft(source, first.answer)
+    source = checkCurrentAnswer(source, 1_100)
+    source = advanceSession(source, 1_200)
+    source = setCurrentDraft(source, String(BigInt(second.answer) + 1n))
+    source = checkCurrentAnswer(source, 1_300)
+    source = setCurrentDraft(source, second.answer)
+    source = checkCurrentAnswer(source, 1_400)
+    source = advanceSession(source, 1_500)
+    source = skipCurrentProblem(source, 1_600)
+    source = advanceSession(source, 1_700)
+    source = revealCurrentAnswer(source, 1_800)
+
+    const review = createReviewSession(source, 2_000)
+    expect(review).not.toBeNull()
+    expect(review?.mode).toBe('review')
+    expect(review?.config.problemCount).toBe(3)
+    expect(review?.problems.map((problem) => problem.id)).toEqual(source.problems.slice(1).map((problem) => problem.id))
+    expect(review?.problems[0]).not.toBe(source.problems[1])
+    expect(review?.progress).toEqual(Array.from({ length: 3 }, () => ({
+      draft: '', attempts: 0, status: 'pending', feedback: 'none', activeElapsedMs: 0,
+    })))
+    expect(review?.timerStartedAt).toBe(2_000)
+    expect(createReviewSession(createTrainingSession(oneQuestion, 1, 0), 2_000)).toBeNull()
+  })
+
+  it('restarts review sessions with the same exact questions and no skip penalty', () => {
+    let source = createTrainingSession(oneQuestion, 22, 1_000)
+    source = skipCurrentProblem(source, 1_100)
+    const review = createReviewSession(source, 2_000)!
+    const restarted = restartReviewSession(review, 3_000)
+
+    expect(restarted.id).not.toBe(review.id)
+    expect(restarted.problems).toEqual(review.problems)
+    expect(restarted.problems[0]).not.toBe(review.problems[0])
+    expect(restarted.progress[0]).toMatchObject({ status: 'pending', attempts: 0, draft: '' })
+    expect(getPenaltyMs(skipCurrentProblem(restarted, 3_500))).toBe(0)
+    expect(createReviewSession(review, 4_000)).toBeNull()
+    expect(() => restartReviewSession(source, 4_000)).toThrow('Only review sessions')
   })
 
   it('never subtracts time when the wall clock moves backward', () => {

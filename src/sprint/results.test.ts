@@ -4,6 +4,7 @@ import { DEFAULT_CONFIG } from '../math/engine'
 import {
   advanceSession,
   checkCurrentAnswer,
+  createReviewSession,
   createTrainingSession,
   setCurrentDraft,
   skipCurrentProblem,
@@ -31,6 +32,14 @@ function completedResult(): SprintResult {
 }
 
 describe('Sprint results', () => {
+  it('never projects review sessions into scored history results', () => {
+    let source = createTrainingSession({ ...DEFAULT_CONFIG, problemCount: 1 }, 8, 1_000)
+    source = skipCurrentProblem(source, 1_100)
+    const review = createReviewSession(source, 2_000)
+    expect(review).not.toBeNull()
+    expect(review && createSprintResult(review)).toBeNull()
+  })
+
   it('projects immutable scored results and excludes feedback delay', () => {
     const result = completedResult()
     expect(result.totals).toMatchObject({
