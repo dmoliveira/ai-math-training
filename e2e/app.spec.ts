@@ -53,6 +53,34 @@ test('completes an addition session entirely from the keyboard', async ({ page }
   await expect(page.getByText('100%')).toBeVisible()
   await expect(page.locator('.result-card').filter({ hasText: 'Mistakes' }).locator('dd')).toContainText('0')
   await expect(page.getByRole('heading', { name: 'Review these questions' })).toHaveCount(0)
+  await expect(page.getByText('Clean set', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Try a one-step stretch' })).toBeVisible()
+  await expect(page.getByText(/own private rankings and history/)).toBeVisible()
+
+  await page.getByRole('button', { name: 'Change settings' }).click()
+  await expect(page.getByRole('heading', { name: 'Continue this exact setup' })).toBeVisible()
+  await expect(page.getByText(/100% first-try accuracy/)).toBeVisible()
+  await page.getByRole('button', { name: /Start this setup/ }).click()
+  await expect(page.getByLabel('Your answer')).toBeFocused()
+})
+
+test('offers accessible one-click challenges without mobile overflow', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 568 })
+  const presets = page.locator('[data-action="start-preset"]')
+  await expect(presets).toHaveCount(3)
+  await expect(page.getByRole('heading', { name: 'Start with a complete challenge' })).toBeVisible()
+  const quickWin = page.locator('[data-preset="quick-win"]')
+  await expect(quickWin).toHaveAttribute('aria-pressed', 'false')
+  const box = await quickWin.boundingBox()
+  expect(box?.height).toBeGreaterThanOrEqual(44)
+  await expectAccessible(page, 'guided mobile setup')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320)
+
+  await quickWin.focus()
+  await expect(quickWin).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(page.getByText('Question 1 of 5')).toBeVisible()
+  await expect(page.getByLabel('Your answer')).toBeFocused()
 })
 
 test('restores a draft, counts retries, reveals, and resumes after save and exit', async ({ page }) => {
@@ -186,12 +214,12 @@ test('retries the exact difficult set in a resumable unscored mastery review', a
   await page.getByRole('button', { name: 'See results' }).click()
 
   await expect(page.locator('.review-list li')).toHaveCount(3)
-  await expect(page.getByRole('button', { name: /Practice these exact questions/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Start exact review/ })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Turn effort into mastery' })).toBeVisible()
   await expect(page.getByText(/Exact setup/)).toHaveCount(0)
   expect(await indexedResultCount(page)).toBe(1)
 
-  await page.getByRole('button', { name: /Practice these exact questions/ }).click()
+  await page.getByRole('button', { name: /Start exact review/ }).click()
   await expect(page.getByText(/Mistake-to-mastery review/)).toBeVisible()
   await expect(page.locator('.numi--pose-thinking')).toBeVisible()
   await expect(page.locator('.mascot-coach p')).toContainText('We’ve seen this one before')
@@ -270,6 +298,8 @@ test('keeps forced-color selection and focus states unambiguous', async ({ page 
   await expect(page.locator('#operator-count-1 + span')).toHaveCSS('outline-style', 'solid')
   await expect(page.locator('#mode-same + .mode-card__body')).toHaveCSS('outline-style', 'solid')
   await expect(page.locator('#theme-forest + span')).toHaveCSS('outline-style', 'solid')
+  await page.locator('[data-preset="quick-win"]').focus()
+  await expect(page.locator('[data-preset="quick-win"]')).toHaveCSS('outline-style', 'solid')
 
   await page.locator('#operation-add').focus()
   await expect(page.locator('.operation-choice--add')).toHaveCSS('outline-style', 'solid')
