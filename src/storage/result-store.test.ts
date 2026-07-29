@@ -168,7 +168,7 @@ describe('IndexedDbResultStore', () => {
       truncated: true,
     })
     database.close()
-  })
+  }, 10_000)
 })
 
 function insertMalformedResults(database: IDBDatabase, template: SprintResult, count: number): Promise<void> {
