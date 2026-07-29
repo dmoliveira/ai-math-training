@@ -1,4 +1,4 @@
-import { OPERATION_DETAILS, type Operation, type TrainingConfig } from '../math/engine'
+import { OPERATIONS, OPERATION_DETAILS, validateConfig, type Operation, type TrainingConfig } from '../math/engine'
 import {
   SKIP_PENALTY_MS,
   getPenaltyMs,
@@ -227,6 +227,7 @@ export function isSprintResult(value: unknown): value is SprintResult {
     !Array.isArray(result.problems)
   ) return false
   const totals = result.totals
+  const normalizedConfig = normalizeResultConfig(result.config)
   const numericTotals = [
     totals.problems,
     totals.correct,
@@ -242,10 +243,56 @@ export function isSprintResult(value: unknown): value is SprintResult {
   return (
     result.id.length > 0 &&
     result.sessionId.length > 0 &&
-    result.configKey === configKey(result.config) &&
+    normalizedConfig !== null &&
+    validateConfig(normalizedConfig).length === 0 &&
+    result.configKey === configKey(normalizedConfig) &&
+    result.problems.every(isSprintProblemResult) &&
     numericTotals.every((item) => Number.isSafeInteger(item) && item >= 0) &&
     totals.problems === result.problems.length &&
     totals.scoredElapsedMs === safeAdd(totals.activeElapsedMs, totals.penaltyMs)
+  )
+}
+
+export function normalizeSprintResult(value: unknown): SprintResult | null {
+  if (!isSprintResult(value)) return null
+  const config = normalizeResultConfig(value.config)
+  if (!config) return null
+  return {
+    ...value,
+    config,
+    totals: { ...value.totals },
+    problems: value.problems.map((problem) => ({ ...problem, operands: [...problem.operands], operators: [...problem.operators] })),
+  }
+}
+
+function normalizeResultConfig(value: unknown): TrainingConfig | null {
+  if (typeof value !== 'object' || value === null) return null
+  const candidate = value as Record<string, unknown>
+  if (!Array.isArray(candidate.operations) || !candidate.operations.every((item) => typeof item === 'string' && OPERATIONS.includes(item as Operation))) return null
+  const config: TrainingConfig = {
+    minDigits: candidate.minDigits as number,
+    maxDigits: candidate.maxDigits as number,
+    operatorCount: candidate.operatorCount as number,
+    operationMode: candidate.operationMode as TrainingConfig['operationMode'],
+    operations: [...candidate.operations] as Operation[],
+    problemCount: candidate.problemCount as number,
+    challenge: (candidate.challenge ?? 'random') as TrainingConfig['challenge'],
+  }
+  return validateConfig(config).length === 0 ? config : null
+}
+
+function isSprintProblemResult(value: unknown): value is SprintProblemResult {
+  if (typeof value !== 'object' || value === null) return false
+  const problem = value as Partial<SprintProblemResult>
+  return (
+    typeof problem.problemId === 'string' &&
+    Array.isArray(problem.operands) && problem.operands.every((item) => typeof item === 'string' && /^\d+$/.test(item)) &&
+    Array.isArray(problem.operators) && problem.operators.every((item) => OPERATIONS.includes(item)) &&
+    (problem.outcome === 'correct' || problem.outcome === 'skipped' || problem.outcome === 'revealed') &&
+    Number.isSafeInteger(problem.attempts) && problem.attempts! >= 0 &&
+    (problem.activeElapsedMs === null || (Number.isSafeInteger(problem.activeElapsedMs) && problem.activeElapsedMs! >= 0)) &&
+    (problem.penaltyMs === 0 || problem.penaltyMs === SKIP_PENALTY_MS) &&
+    (problem.scoredElapsedMs === null || (Number.isSafeInteger(problem.scoredElapsedMs) && problem.scoredElapsedMs! >= 0))
   )
 }
 

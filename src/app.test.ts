@@ -11,8 +11,8 @@ import {
   type StoreLoadResult,
 } from './storage/progress-store'
 
-const createPracticeState = (): PersistedAppState => {
-  const config = { ...DEFAULT_CONFIG, operations: [...DEFAULT_CONFIG.operations], problemCount: 1 }
+const createPracticeState = (problemCount = 1): PersistedAppState => {
+  const config = { ...DEFAULT_CONFIG, operations: [...DEFAULT_CONFIG.operations], problemCount }
   const session = pauseSession(createTrainingSession(config, 42, 1_000), 1_000)
   return {
     schemaVersion: APP_SCHEMA_VERSION,
@@ -45,6 +45,13 @@ const createResultStore = (): ResultStore => ({
   listCompletedSince: vi.fn(async () => emptyResultPage()),
   clearConfig: vi.fn(async () => ({ status: 'cleared' as const })),
 })
+
+function submitAnswer(root: HTMLElement, answer: string): void {
+  const input = root.querySelector<HTMLInputElement>('#answer-input')!
+  input.value = answer
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+}
 
 function setVisibility(value: DocumentVisibilityState): void {
   Object.defineProperty(document, 'visibilityState', { configurable: true, value })
@@ -107,7 +114,7 @@ describe('MathTrainingApp lifecycle', () => {
 
     const saved = store.save.mock.calls.at(-1)![0] as PersistedAppState
     expect(saved.view).toBe('practice')
-    expect(saved.settings).toEqual({ minDigits: 1, maxDigits: 1, operatorCount: 1, operationMode: 'same', operations: ['add', 'subtract'], problemCount: 5 })
+    expect(saved.settings).toEqual({ minDigits: 1, maxDigits: 1, operatorCount: 1, operationMode: 'same', operations: ['add', 'subtract'], problemCount: 5, challenge: 1 })
     expect(saved.session?.config).toEqual(saved.settings)
     expect(root.querySelector('#answer-form')).not.toBeNull()
     app.destroy()
@@ -236,6 +243,75 @@ describe('MathTrainingApp lifecycle', () => {
     expect(announcer.isConnected).toBe(false)
   })
 
+  it('shows correct feedback, then advances exactly once after 900ms', () => {
+    const state = createPracticeState(2)
+    const answer = state.session!.problems[0]!.answer
+    const store = createStore({ status: 'ok', state })
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store, now: () => 2_000 })
+    app.start()
+
+    submitAnswer(root, answer)
+    vi.advanceTimersByTime(0)
+    expect(root.dataset.motion).toBe('correct')
+    expect(root.style.getPropertyValue('--progress-from')).toBe('0%')
+    expect(root.style.getPropertyValue('--progress-to')).toBe('50%')
+    expect(root.textContent).toContain('Correct.')
+    expect(root.textContent).toContain('Question 1 of 2')
+    expect(document.querySelector('#app-announcer')?.textContent).toBe('Correct. Moving to the next question.')
+    expect(root.querySelector('#answer-input')?.hasAttribute('readonly')).toBe(true)
+    const saved = store.save.mock.calls.at(-1)![0] as PersistedAppState
+    expect(saved.session?.progress[0]?.status).toBe('correct')
+
+    vi.advanceTimersByTime(899)
+    expect(root.textContent).toContain('Question 1 of 2')
+    vi.advanceTimersByTime(1)
+    expect(root.textContent).toContain('Question 2 of 2')
+    expect(root.dataset.motion).toBe('question-enter')
+    expect(root.style.getPropertyValue('--progress-from')).toBe('')
+    expect(root.querySelector('#answer-input')).toBe(document.activeElement)
+    vi.advanceTimersByTime(900)
+    expect(root.textContent).toContain('Question 2 of 2')
+    app.destroy()
+  })
+
+  it('lets manual advance or the live toggle safely cancel automatic movement', () => {
+    const state = createPracticeState(3)
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store: createStore({ status: 'ok', state }), now: () => 2_000 })
+    app.start()
+
+    submitAnswer(root, state.session!.problems[0]!.answer)
+    vi.advanceTimersByTime(899)
+    root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    expect(root.textContent).toContain('Question 2 of 3')
+    vi.advanceTimersByTime(1)
+    expect(root.textContent).toContain('Question 2 of 3')
+
+    submitAnswer(root, state.session!.problems[1]!.answer)
+    root.querySelector<HTMLButtonElement>('[data-action="toggle-auto-advance"]')!.click()
+    expect(root.querySelector('[data-action="toggle-auto-advance"]')?.getAttribute('aria-pressed')).toBe('false')
+    vi.advanceTimersByTime(1_000)
+    expect(root.textContent).toContain('Question 2 of 3')
+    expect(root.textContent).toContain('Next question')
+    app.destroy()
+  })
+
+  it('cancels a pending automatic advance when hidden or destroyed', () => {
+    const state = createPracticeState(2)
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store: createStore({ status: 'ok', state }), now: () => 2_000 })
+    app.start()
+    submitAnswer(root, state.session!.problems[0]!.answer)
+    setVisibility('hidden')
+    document.dispatchEvent(new Event('visibilitychange'))
+    vi.advanceTimersByTime(1_000)
+    expect(root.textContent).toContain('Question 1 of 2')
+    app.destroy()
+    vi.advanceTimersByTime(1_000)
+    expect(root.textContent).toContain('Question 1 of 2')
+  })
+
   it('announces a failed save without claiming progress is stored', () => {
     const store = createStore({ status: 'empty', state: null })
     store.save.mockReturnValue(false)
@@ -362,6 +438,8 @@ describe('MathTrainingApp lifecycle', () => {
 
     now = 4_000
     root.querySelector<HTMLButtonElement>('[data-action="skip"]')!.click()
+    expect(root.dataset.motion).toBe('skip')
+    expect(root.style.getPropertyValue('--progress-to')).toBe('100%')
     expect(root.textContent).toContain('20 seconds added to your scored time')
     expect(root.querySelector<HTMLImageElement>('.numi--pose-encouraging')?.src).toContain('/numi/encouraging.webp')
     expect(root.textContent).toContain('100% complete')
@@ -372,6 +450,7 @@ describe('MathTrainingApp lifecycle', () => {
       new SubmitEvent('submit', { bubbles: true, cancelable: true }),
     )
     expect(root.textContent).toContain('Session complete.')
+    expect(root.dataset.motion).toBe('completion-enter')
     expect(root.querySelector<HTMLImageElement>('.numi--completion.numi--pose-encouraging')?.src).toContain('/numi/encouraging.webp')
     expect(root.textContent).not.toContain('Perfect run!')
     expect(root.textContent).toContain('Scored time')
@@ -450,6 +529,7 @@ describe('MathTrainingApp lifecycle', () => {
       app.start()
       expect(root.textContent).toContain(complete ? 'Review complete.' : 'Mistake-to-mastery review')
       if (complete) expect(root.querySelector<HTMLImageElement>('.numi--completion.numi--pose-encouraging')?.src).toContain('/numi/encouraging.webp')
+      if (complete) expect(root.dataset.motion).toBe('settled')
       expect(resultStore.saveCompleted).not.toHaveBeenCalled()
       expect(resultStore.listRanked).not.toHaveBeenCalled()
       expect(resultStore.listCompleted).not.toHaveBeenCalled()
@@ -663,6 +743,7 @@ describe('MathTrainingApp lifecycle', () => {
 
     root.querySelector<HTMLButtonElement>('[data-action="cycle-theme"]')!.click()
     expect(document.documentElement.dataset.theme).toBe('midnight')
+    expect(root.dataset.motion).toBe('settled')
     root.querySelector<HTMLButtonElement>('[data-action="toggle-density"]')!.click()
     expect(document.documentElement.dataset.density).toBe('compact')
     expect(store.save).toHaveBeenCalled()

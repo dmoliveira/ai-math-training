@@ -28,6 +28,7 @@ test('completes an addition session entirely from the keyboard', async ({ page }
   const supportLink = page.getByRole('link', { name: /Support via Stripe/ })
   await expect(supportLink).toHaveAttribute('href', 'https://buy.stripe.com/8x200i8bSgVe3Vl3g8bfO00')
   await expect(supportLink).toHaveAttribute('rel', /noopener noreferrer/)
+  await page.locator('#auto-advance').uncheck()
   await setQuestionCount(page, 1)
   await page.getByRole('button', { name: /Start sprint/ }).click()
   await expect(page.locator('.numi--pose-thinking')).toHaveAttribute('src', /numi\/thinking\.webp$/)
@@ -42,12 +43,17 @@ test('completes an addition session entirely from the keyboard', async ({ page }
   await input.press('Enter')
   await expect(page.getByText('Correct.', { exact: true })).toBeVisible()
   await expect(page.locator('.numi--pose-celebration')).toBeVisible()
+  await expect(page.locator('#app')).toHaveAttribute('data-motion', 'correct')
+  expect(await page.locator('.answer-feedback').evaluate((element) => getComputedStyle(element).animationName)).toBe('feedback-arrive')
+  expect(await page.locator('.progress-track span').evaluate((element) => getComputedStyle(element).animationName)).toBe('progress-earned')
   await expectAccessible(page, 'correct answer')
   await expect(page.locator('#app-announcer')).toHaveText('Correct. See your results.')
   await expect(input).toHaveAttribute('readonly', '')
 
   await page.keyboard.press('Enter')
   await expect(page.getByRole('heading', { name: 'Perfect run!' })).toBeVisible()
+  await expect(page.locator('#app')).toHaveAttribute('data-motion', 'completion-enter')
+  expect(await page.locator('.completion-card').evaluate((element) => getComputedStyle(element).animationName)).toBe('completion-fade')
   await expect(page.locator('.numi--completion.numi--pose-celebration')).toBeVisible()
   await expectAccessible(page, 'perfect completion')
   await expect(page.getByText('100%')).toBeVisible()
@@ -64,10 +70,30 @@ test('completes an addition session entirely from the keyboard', async ({ page }
   await expect(page.getByLabel('Your answer')).toBeFocused()
 })
 
+test('moves to the next question automatically after correct feedback', async ({ page }) => {
+  await setQuestionCount(page, 1)
+  await page.getByRole('button', { name: /Start sprint/ }).click()
+  await expect(page.locator('.auto-next-toggle')).toHaveAttribute('aria-pressed', 'true')
+  const expression = await page.locator('.expression__pieces').innerText()
+  const operands = expression.match(/\d+/g)?.map(Number) ?? []
+  await page.getByLabel('Your answer').fill(String((operands[0] ?? 0) + (operands[1] ?? 0)))
+  await page.getByLabel('Your answer').press('Enter')
+  await expect(page.locator('#app-announcer')).toHaveText('Correct. Moving to the next question.')
+  await expect(page.getByRole('heading', { name: 'Perfect run!' })).toBeVisible()
+})
+
 test('offers accessible one-click challenges without mobile overflow', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 568 })
   const presets = page.locator('[data-action="start-preset"]')
   await expect(presets).toHaveCount(3)
+  await expect(page.getByRole('radio', { name: /Random/ })).toBeChecked()
+  expect(await page.locator('.numi--hero').evaluate((element) => getComputedStyle(element).animationName)).toBe('none')
+  await expect(page.getByRole('radio', { name: /Level/ })).toHaveCount(5)
+  const levelFive = page.getByRole('radio', { name: /Level 5/ })
+  const levelCard = await page.locator('input[name="challenge"][value="5"] + span').boundingBox()
+  expect(levelCard?.height).toBeGreaterThanOrEqual(44)
+  await levelFive.check()
+  await expect(page.getByText(/Level 5 starts at the approachable side/)).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Start with a complete challenge' })).toBeVisible()
   const quickWin = page.locator('[data-preset="quick-win"]')
   await expect(quickWin).toHaveAttribute('aria-pressed', 'false')
@@ -298,6 +324,7 @@ test('keeps forced-color selection and focus states unambiguous', async ({ page 
   await expect(page.locator('#operator-count-1 + span')).toHaveCSS('outline-style', 'solid')
   await expect(page.locator('#mode-same + .mode-card__body')).toHaveCSS('outline-style', 'solid')
   await expect(page.locator('#theme-forest + span')).toHaveCSS('outline-style', 'solid')
+  await expect(page.locator('input[name="challenge"][value="random"] + span')).toHaveCSS('outline-style', 'solid')
   await page.locator('[data-preset="quick-win"]').focus()
   await expect(page.locator('[data-preset="quick-win"]')).toHaveCSS('outline-style', 'solid')
 
@@ -306,6 +333,7 @@ test('keeps forced-color selection and focus states unambiguous', async ({ page 
 
   await setQuestionCount(page, 1)
   await page.getByRole('button', { name: /Start sprint/ }).click()
+  await expect(page.locator('.auto-next-toggle')).toHaveCSS('outline-style', 'solid')
   await expect(page.locator('.mascot-coach p')).toContainText('Numi')
   await expect(page.locator('.numi--coach')).toBeHidden()
 })
@@ -388,6 +416,10 @@ test('persists themes and compact mode with accessible icon navigation', async (
   await page.emulateMedia({ reducedMotion: 'reduce' })
   const animation = await page.locator('.numi--coach').evaluate((element) => getComputedStyle(element).animationName)
   expect(animation).toBe('none')
+  await page.getByLabel('Your answer').fill('0')
+  await page.getByLabel('Your answer').press('Enter')
+  expect(await page.locator('.answer-feedback').evaluate((element) => getComputedStyle(element).animationName)).toBe('none')
+  expect(await page.locator('.progress-track span').evaluate((element) => getComputedStyle(element).animationName)).toBe('none')
 })
 
 test('publishes canonical social metadata and production-base assets', async ({ page }) => {

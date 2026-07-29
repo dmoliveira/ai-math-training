@@ -20,20 +20,24 @@ A fast, private browser game for sharpening mental arithmetic. Configure a sprin
 | | Feature | What it gives you |
 | --- | --- | --- |
 | 🎛️ | **Flexible sessions** | Choose 1–5 digit operands, 1–4 operators, and 1–50 questions. |
+| 🧭 | **Progressive challenge paths** | Keep the original Random mix or choose Levels 1–5 for a deterministic easy-to-hard ramp within your settings. |
 | ➕➖ | **Four operations** | Practise addition, subtraction, multiplication, and exact division. |
 | 🔀 | **Same or mixed** | Repeat one operation or combine selected operations with standard precedence. |
 | ⌨️ | **Keyboard first** | Use a keyboard, number pad, or the accessible on-screen keypad. |
 | ✅ | **Helpful feedback** | Retry mistakes, reveal one answer, and review missed questions at the end. |
+| ⚡ | **Optional automatic flow** | Correct answers move to the next question after a short success moment; switch Auto-next off any time for manual control. |
 | ↺ | **Mistake-to-mastery reviews** | Retry the exact questions that took extra work in a resumable, unscored review round. |
 | 🌱 | **Expressive Numi coaching** | A locally generated four-pose mascot offers warm, state-aware encouragement without replacing accessible text feedback. |
+| ✨ | **Purposeful motion** | Key moments respond with brief, event-specific animation that disappears under reduced-motion preferences. |
 | ⏱️ | **Sprint results** | See active and scored time, skips, first-try accuracy, rankings, and seven-day trends. |
 | 🔒 | **Private by default** | Settings and active progress use versioned `localStorage`; completed history uses IndexedDB. There are no accounts or trackers. |
 | ♿ | **Accessible and responsive** | Semantic controls, visible focus, reduced motion, and layouts tested from 320px upward. |
 
 ## How to practise 🚀
 
-1. **Build a session** — choose a minimum and maximum digit count, operations, operators per question, pattern, and question total.
+1. **Build a session** — choose number size, operations, expression length, pattern, question total, and either Random or a progressive challenge level.
 2. **Solve each expression** — type an answer or use the on-screen keypad, then press <kbd>Enter</kbd>.
+   With Auto-next on, a correct answer advances after a brief success pause; turn it off in setup or during practice to use the Next question button.
 3. **Review your run** — use the training insight, compare exact-setup history, and revisit questions that needed retries, skips, or reveals.
 4. **Master difficult questions** — launch an unscored review containing those exact expressions; review progress can be saved and resumed without affecting rankings.
 5. **Share if you choose** — use native sharing, copy, or ordinary social links. Sharing never happens automatically.
@@ -59,6 +63,7 @@ Your active sprint or review is restored after a refresh. **Save & exit** pauses
 - **Mixed mode:** at least two selected operations appear, using standard order of operations.
 - **Answers:** every generated result is an exact, non-negative whole number. BigInt arithmetic keeps large answers precise.
 - **Division:** divisors are never zero and division never requires rounding. The setup explains when a repeated-division range cannot produce a whole-number exercise.
+- **Challenge levels:** Levels 1–5 rank a bounded deterministic pool of valid questions relative to the settings you chose, then build upward within that band. They describe question selection, not a claim about learner ability. Random preserves the original seeded mix.
 
 ## Run it locally 🛠️
 

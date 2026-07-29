@@ -1,4 +1,4 @@
-import { OPERATIONS, type Problem, type TrainingConfig } from '../math/engine'
+import { OPERATIONS, type ChallengeLevel, type Problem, type TrainingConfig } from '../math/engine'
 
 export type OrientationPreference = 'horizontal' | 'vertical'
 export type ThemePreference = 'forest' | 'midnight'
@@ -9,6 +9,7 @@ export interface PracticePreferences {
   audioEnabled: boolean
   theme: ThemePreference
   density: DensityPreference
+  autoAdvance: boolean
 }
 
 export const DEFAULT_PREFERENCES: PracticePreferences = {
@@ -16,6 +17,7 @@ export const DEFAULT_PREFERENCES: PracticePreferences = {
   audioEnabled: false,
   theme: 'forest',
   density: 'comfortable',
+  autoAdvance: true,
 }
 
 export type AudioCue =
@@ -45,16 +47,20 @@ export interface SharePort {
   copy(payload: SharePayload): Promise<'copied' | 'unavailable'>
 }
 
-export function configKey(config: TrainingConfig): string {
+type ConfigIdentity = Omit<TrainingConfig, 'challenge'> & { challenge?: ChallengeLevel }
+
+export function configKey(config: ConfigIdentity): string {
   const selected = OPERATIONS.filter((operation) => config.operations.includes(operation))
+  const challenge = config.challenge ?? 'random'
   return [
-    'config-v1',
+    challenge === 'random' ? 'config-v1' : 'config-v2',
     config.minDigits,
     config.maxDigits,
     config.operatorCount,
     config.operationMode,
     selected.join(','),
     config.problemCount,
+    ...(challenge === 'random' ? [] : [challenge]),
   ].join(':')
 }
 
@@ -72,13 +78,15 @@ export function parsePracticePreferences(value: unknown): PracticePreferences | 
     (candidate.orientation !== 'horizontal' && candidate.orientation !== 'vertical') ||
     typeof candidate.audioEnabled !== 'boolean' ||
     (candidate.theme !== undefined && candidate.theme !== 'forest' && candidate.theme !== 'midnight') ||
-    (candidate.density !== undefined && candidate.density !== 'comfortable' && candidate.density !== 'compact')
+    (candidate.density !== undefined && candidate.density !== 'comfortable' && candidate.density !== 'compact') ||
+    (candidate.autoAdvance !== undefined && typeof candidate.autoAdvance !== 'boolean')
   ) return null
   return {
     orientation: candidate.orientation,
     audioEnabled: candidate.audioEnabled,
     theme: candidate.theme === 'midnight' ? 'midnight' : 'forest',
     density: candidate.density === 'compact' ? 'compact' : 'comfortable',
+    autoAdvance: candidate.autoAdvance !== false,
   }
 }
 
@@ -86,5 +94,5 @@ export function isPracticePreferences(value: unknown): value is PracticePreferen
   const parsed = parsePracticePreferences(value)
   if (!parsed || typeof value !== 'object' || value === null) return false
   const candidate = value as Record<string, unknown>
-  return candidate.theme === parsed.theme && candidate.density === parsed.density
+  return candidate.theme === parsed.theme && candidate.density === parsed.density && candidate.autoAdvance === parsed.autoAdvance
 }

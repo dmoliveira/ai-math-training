@@ -7,6 +7,7 @@ import {
   generateProblems,
   speakExpression,
   validateConfig,
+  type ChallengeLevel,
   type Operation,
   type TrainingConfig,
 } from './math/engine'
@@ -71,6 +72,14 @@ interface HistoryViewState {
   nextCursor: string | null
 }
 
+type MotionEvent = 'setup-enter' | 'practice-enter' | 'question-enter' | 'incorrect' | 'correct' | 'skip' | 'reveal' | 'resume-enter' | 'completion-enter'
+
+interface MotionIntent {
+  event: MotionEvent
+  progressFrom?: number
+  progressTo?: number
+}
+
 export class MathTrainingApp {
   private readonly root: HTMLElement
   private readonly store: StorePort
@@ -92,6 +101,8 @@ export class MathTrainingApp {
   private notice: Notice | null = null
   private timerId: number | null = null
   private announcementTimerId: number | null = null
+  private autoAdvanceTimerId: number | null = null
+  private autoAdvanceGeneration = 0
   private lastPersistedAt = 0
   private storageWarningShown = false
   private started = false
@@ -129,7 +140,7 @@ export class MathTrainingApp {
     window.addEventListener('beforeunload', this.handleBeforeUnload)
     this.timerId = window.setInterval(this.handleTimerTick, 250)
 
-    this.render()
+    this.render(this.state.view === 'setup' ? { event: 'setup-enter' } : this.state.view === 'practice' ? { event: 'practice-enter' } : undefined)
     if (this.currentResult) void this.persistCompletedResult(this.currentResult)
     else if (!(this.state.view !== 'setup' && this.state.session?.mode === 'review')) void this.refreshHistory()
     if (this.state.view !== 'setup') this.focusCurrentView()
@@ -147,6 +158,7 @@ export class MathTrainingApp {
     window.removeEventListener('beforeunload', this.handleBeforeUnload)
     if (this.timerId !== null) window.clearInterval(this.timerId)
     if (this.announcementTimerId !== null) window.clearTimeout(this.announcementTimerId)
+    this.cancelAutoAdvance()
     this.timerId = null
     this.announcementTimerId = null
     this.announcer.textContent = ''
@@ -156,6 +168,9 @@ export class MathTrainingApp {
     delete document.documentElement.dataset.theme
     delete document.documentElement.dataset.density
     delete this.root.dataset.view
+    delete this.root.dataset.motion
+    this.root.style.removeProperty('--progress-from')
+    this.root.style.removeProperty('--progress-to')
     this.started = false
   }
 
@@ -187,6 +202,7 @@ export class MathTrainingApp {
         this.saveAndExit()
         break
       case 'open-restart':
+        this.cancelAutoAdvance()
         this.openDialog('restart-dialog')
         break
       case 'confirm-restart':
@@ -236,6 +252,9 @@ export class MathTrainingApp {
       case 'toggle-density':
         this.setAppearance({ density: this.state.preferences.density === 'compact' ? 'comfortable' : 'compact' })
         break
+      case 'toggle-auto-advance':
+        this.toggleAutoAdvance()
+        break
       case 'share-result':
         void this.shareCurrentResult(false)
         break
@@ -261,7 +280,7 @@ export class MathTrainingApp {
     if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return
     if (!target.closest('#setup-form')) return
 
-    if (['orientation', 'audioEnabled', 'theme', 'density'].includes(target.name)) {
+    if (['orientation', 'audioEnabled', 'theme', 'density', 'autoAdvance'].includes(target.name)) {
       const preferences = { ...this.state.preferences }
       if (target.name === 'orientation') {
         preferences.orientation = target.value === 'vertical' ? 'vertical' : 'horizontal'
@@ -272,6 +291,9 @@ export class MathTrainingApp {
       } else if (target.name === 'density') {
         preferences.density = target instanceof HTMLInputElement && target.checked ? 'compact' : 'comfortable'
         this.announce(`${preferences.density === 'compact' ? 'Compact' : 'Comfortable'} layout selected.`)
+      } else if (target.name === 'autoAdvance' && target instanceof HTMLInputElement) {
+        preferences.autoAdvance = target.checked
+        this.announce(`Automatic next question ${target.checked ? 'on' : 'off'}.`)
       } else if (target instanceof HTMLInputElement) {
         preferences.audioEnabled = target.checked
         if (target.checked) void this.enableAudio()
@@ -315,6 +337,8 @@ export class MathTrainingApp {
       }
     } else if (target.name === 'problemCount') {
       next.problemCount = clampInteger(Number(target.value), 1, 50)
+    } else if (target.name === 'challenge') {
+      next.challenge = parseChallengeLevel(target.value)
     } else {
       return
     }
@@ -411,6 +435,7 @@ export class MathTrainingApp {
     if (!session || this.state.view !== 'practice' || session.completedAt !== null) return
 
     if (document.visibilityState === 'hidden') {
+      this.cancelAutoAdvance()
       this.suspendAudio()
       this.state = { ...this.state, session: pauseSession(session, this.now()) }
       this.persist(true)
@@ -462,8 +487,16 @@ export class MathTrainingApp {
     }
   }
 
-  private render(): void {
+  private render(intent?: MotionIntent): void {
     this.root.dataset.view = this.state.view
+    this.root.dataset.motion = intent?.event ?? 'settled'
+    if (intent?.progressFrom !== undefined && intent.progressTo !== undefined) {
+      this.root.style.setProperty('--progress-from', `${intent.progressFrom}%`)
+      this.root.style.setProperty('--progress-to', `${intent.progressTo}%`)
+    } else {
+      this.root.style.removeProperty('--progress-from')
+      this.root.style.removeProperty('--progress-to')
+    }
     const content =
       this.state.view === 'practice' && this.state.session
         ? this.renderPractice(this.state.session)
@@ -592,6 +625,15 @@ export class MathTrainingApp {
               <p class="selection-note">${escapeHtml(digitRangeDescription(config))}</p>
             </fieldset>
 
+            <fieldset class="setting-group challenge-setting">
+              <legend>Challenge path</legend>
+              <p class="field-hint">Levels choose progressively tougher questions within your number and operation settings.</p>
+              <div class="challenge-grid">
+                ${CHALLENGE_OPTIONS.map((option) => `<label class="challenge-card"><input type="radio" name="challenge" value="${option.value}" ${checked(config.challenge === option.value)} /><span><b>${escapeHtml(option.title)}</b><small>${escapeHtml(option.detail)}</small></span></label>`).join('')}
+              </div>
+              <p class="selection-note">${escapeHtml(challengeDescription(config.challenge))}</p>
+            </fieldset>
+
             <fieldset class="setting-group">
               <legend>Operations</legend>
               <p class="field-hint">Pick one or more skills to practise.</p>
@@ -685,6 +727,10 @@ export class MathTrainingApp {
                 <label class="sound-option" for="audio-enabled">
                   <input id="audio-enabled" type="checkbox" name="audioEnabled" ${checked(this.state.preferences.audioEnabled)} />
                   <span><strong>Play sound cues</strong><small>Optional feedback sounds; every result also appears on screen.</small></span>
+                </label>
+                <label class="sound-option" for="auto-advance">
+                  <input id="auto-advance" type="checkbox" name="autoAdvance" ${checked(this.state.preferences.autoAdvance)} />
+                  <span><strong>Move on after correct answers</strong><small>Shows success briefly, then opens the next question automatically. You can turn this off during a sprint.</small></span>
                 </label>
               </div>
             </fieldset>
@@ -869,6 +915,7 @@ export class MathTrainingApp {
               <span style="width: ${(progressValue / session.problems.length) * 100}%"></span>
             </div>
           </div>
+          <button class="auto-next-toggle" type="button" data-action="toggle-auto-advance" aria-pressed="${this.state.preferences.autoAdvance}"><span aria-hidden="true">${this.state.preferences.autoAdvance ? '⚡' : 'Ⅱ'}</span><span>Auto-next <strong>${this.state.preferences.autoAdvance ? 'On' : 'Off'}</strong></span></button>
           <dl class="session-metrics">
             <div><dt>Session time</dt><dd id="elapsed-time">${formatDuration(getElapsedMs(session, this.now()))}</dd></div>
             <div><dt>This question</dt><dd id="question-time">${questionElapsed === null ? '—' : formatDuration(questionElapsed)}</dd></div>
@@ -1265,6 +1312,7 @@ export class MathTrainingApp {
   }
 
   private startNewSession(): void {
+    this.cancelAutoAdvance()
     const errors = validateConfig(this.state.settings)
     if (errors.length > 0) return
 
@@ -1279,7 +1327,7 @@ export class MathTrainingApp {
     }
     this.notice = null
     this.persist(true)
-    this.render()
+    this.render({ event: 'practice-enter' })
     this.focusPracticeInput()
   }
 
@@ -1295,6 +1343,7 @@ export class MathTrainingApp {
   }
 
   private restartSession(): void {
+    this.cancelAutoAdvance()
     const current = this.state.session
     const config = current?.config ?? this.state.settings
     const session = current?.mode === 'review'
@@ -1309,11 +1358,12 @@ export class MathTrainingApp {
     }
     this.notice = null
     this.persist(true)
-    this.render()
+    this.render({ event: 'practice-enter' })
     this.focusPracticeInput()
   }
 
   private startReviewSession(): void {
+    this.cancelAutoAdvance()
     const source = this.state.session
     if (!source || source.mode !== 'sprint' || source.completedAt === null) return
     const review = createReviewSession(source, this.now())
@@ -1324,12 +1374,13 @@ export class MathTrainingApp {
     this.state = { ...this.state, view: 'practice', session: review }
     this.notice = null
     this.persist(true)
-    this.render()
+    this.render({ event: 'practice-enter' })
     this.announce(`Focused review started with ${review.problems.length} ${pluralize(review.problems.length, 'question')}. This round is unscored.`)
     this.focusPracticeInput()
   }
 
   private resumeSavedSession(): void {
+    this.cancelAutoAdvance()
     if (!this.state.session || this.state.session.completedAt !== null) return
     this.state = {
       ...this.state,
@@ -1338,11 +1389,12 @@ export class MathTrainingApp {
     }
     this.notice = null
     this.persist(true)
-    this.render()
+    this.render({ event: 'resume-enter' })
     this.focusPracticeInput()
   }
 
   private saveAndExit(): void {
+    this.cancelAutoAdvance()
     this.suspendAudio()
     if (!this.state.session) return
     this.state = {
@@ -1357,30 +1409,32 @@ export class MathTrainingApp {
           message: 'Progress cannot be saved on this device. Practice still works in this tab.',
           tone: 'warning',
         }
-    this.render()
+    this.render({ event: 'resume-enter' })
     void this.refreshHistory()
     this.announce(this.notice.message)
     this.focusCurrentView()
   }
 
   private discardSession(): void {
+    this.cancelAutoAdvance()
     this.suspendAudio()
     this.currentResult = null
     this.state = { ...this.state, view: 'setup', session: null }
     this.notice = { message: 'Saved session discarded. Your settings are still here.', tone: 'info' }
     this.persist(true)
-    this.render()
+    this.render({ event: 'setup-enter' })
     void this.refreshHistory()
     this.focusCurrentView()
   }
 
   private changeSettings(): void {
+    this.cancelAutoAdvance()
     this.suspendAudio()
     this.currentResult = null
     this.state = { ...this.state, view: 'setup', session: null }
     this.notice = null
     this.persist(true)
-    this.render()
+    this.render({ event: 'setup-enter' })
     void this.refreshHistory()
     this.focusCurrentView()
   }
@@ -1408,19 +1462,31 @@ export class MathTrainingApp {
       this.state = { ...this.state, session: checkedSession }
       this.playCue(checkedSession.progress[checkedSession.currentIndex]?.status === 'pending' ? 'incorrect' : 'correct')
       this.persist(true)
-      this.render()
+      const progressFrom = completionPercent(session)
+      const progressTo = completionPercent(checkedSession)
+      this.render({ event: checkedSession.progress[checkedSession.currentIndex]?.status === 'pending' ? 'incorrect' : 'correct', progressFrom, progressTo })
       const checkedProgress = checkedSession.progress[checkedSession.currentIndex]
       if (checkedProgress?.status === 'pending') {
         this.announce('Incorrect. Try again.')
         this.focusAnswerInput(true)
       } else {
         const isLast = checkedSession.currentIndex === checkedSession.problems.length - 1
-        this.announce(`Correct. ${isLast ? 'See your results.' : 'Next question.'}`)
+        this.announce(this.state.preferences.autoAdvance ? 'Correct. Moving to the next question.' : `Correct. ${isLast ? 'See your results.' : 'Next question.'}`)
         document.getElementById('primary-action')?.focus()
+        if (this.state.preferences.autoAdvance) this.scheduleAutoAdvance(checkedSession)
       }
       return
     }
 
+    this.advanceCurrentQuestion()
+  }
+
+  private advanceCurrentQuestion(): void {
+    this.cancelAutoAdvance()
+    const session = this.state.session
+    if (!session || this.state.view !== 'practice' || session.completedAt !== null) return
+    const progress = session.progress[session.currentIndex]
+    if (!progress || progress.status === 'pending') return
     const advanced = advanceSession(session, this.now())
     if (advanced.completedAt !== null && session.completedAt === null) this.playCue('complete')
     this.state = {
@@ -1436,19 +1502,53 @@ export class MathTrainingApp {
       }
     }
     this.persist(true)
-    this.render()
+    this.render(advanced.completedAt === null ? { event: 'question-enter' } : { event: 'completion-enter' })
     if (this.currentResult && advanced.mode === 'sprint' && advanced.completedAt !== null && session.completedAt === null) void this.persistCompletedResult(this.currentResult)
     this.focusCurrentView()
   }
 
+  private scheduleAutoAdvance(session: TrainingSession): void {
+    this.cancelAutoAdvance()
+    const generation = this.autoAdvanceGeneration
+    const sessionId = session.id
+    const index = session.currentIndex
+    this.autoAdvanceTimerId = window.setTimeout(() => {
+      this.autoAdvanceTimerId = null
+      if (generation !== this.autoAdvanceGeneration || !this.started || document.visibilityState !== 'visible') return
+      const current = this.state.session
+      if (this.state.view !== 'practice' || !current || current.id !== sessionId || current.currentIndex !== index || current.completedAt !== null) return
+      if (current.progress[index]?.status !== 'correct') return
+      this.advanceCurrentQuestion()
+    }, 900)
+  }
+
+  private cancelAutoAdvance(): void {
+    this.autoAdvanceGeneration += 1
+    if (this.autoAdvanceTimerId !== null) window.clearTimeout(this.autoAdvanceTimerId)
+    this.autoAdvanceTimerId = null
+  }
+
+  private toggleAutoAdvance(): void {
+    const autoAdvance = !this.state.preferences.autoAdvance
+    if (!autoAdvance) this.cancelAutoAdvance()
+    this.state = { ...this.state, preferences: { ...this.state.preferences, autoAdvance } }
+    this.persist(true)
+    this.render()
+    this.announce(`Automatic next question ${autoAdvance ? 'on' : 'off'}.`)
+    window.requestAnimationFrame(() => this.root.querySelector<HTMLElement>('[data-action="toggle-auto-advance"]')?.focus())
+    const session = this.state.session
+    if (autoAdvance && session?.progress[session.currentIndex]?.status === 'correct') this.scheduleAutoAdvance(session)
+  }
+
   private confirmReveal(): void {
-    if (!this.state.session) return
-    const revealedSession = revealCurrentAnswer(this.state.session, this.now())
-    if (revealedSession === this.state.session) return
+    const session = this.state.session
+    if (!session) return
+    const revealedSession = revealCurrentAnswer(session, this.now())
+    if (revealedSession === session) return
     this.playCue('reveal')
     this.state = { ...this.state, session: revealedSession }
     this.persist(true)
-    this.render()
+    this.render({ event: 'reveal', progressFrom: completionPercent(session), progressTo: completionPercent(revealedSession) })
     const answer = revealedSession.problems[revealedSession.currentIndex]?.answer ?? ''
     this.announce(`Answer revealed: ${answer}.`)
     document.getElementById('primary-action')?.focus()
@@ -1462,7 +1562,7 @@ export class MathTrainingApp {
     this.state = { ...this.state, session: skipped }
     this.playCue('skip')
     this.persist(true)
-    this.render()
+    this.render({ event: 'skip', progressFrom: completionPercent(session), progressTo: completionPercent(skipped) })
     const isLast = skipped.currentIndex === skipped.problems.length - 1
     const reviewMessage = session.mode === 'review' ? ' It stays in this unscored review.' : ' 20 seconds added.'
     this.announce(`Question skipped.${reviewMessage} ${isLast ? (session.mode === 'review' ? 'Finish your review.' : 'See your results.') : 'Next question.'}`)
@@ -1812,7 +1912,28 @@ function digitRangeShort(config: TrainingConfig): string {
 
 function formatConfigSummary(config: TrainingConfig): string {
   const operations = config.operations.map((operation) => OPERATION_DETAILS[operation].shortLabel).join(', ')
-  return `${config.problemCount} ${pluralize(config.problemCount, 'question')} · ${digitRangeShort(config)} · ${config.operatorCount} ${pluralize(config.operatorCount, 'operator')} · ${config.operationMode === 'mixed' ? 'Mixed' : 'Same'} · ${operations}`
+  return `${config.problemCount} ${pluralize(config.problemCount, 'question')} · ${config.challenge === 'random' ? 'Random' : `Level ${config.challenge}`} · ${digitRangeShort(config)} · ${config.operatorCount} ${pluralize(config.operatorCount, 'operator')} · ${config.operationMode === 'mixed' ? 'Mixed' : 'Same'} · ${operations}`
+}
+
+const CHALLENGE_OPTIONS: ReadonlyArray<{ value: ChallengeLevel; title: string; detail: string }> = [
+  { value: 'random', title: 'Random', detail: 'The original surprise mix.' },
+  { value: 1, title: 'Level 1', detail: 'A gentle confidence-building ramp.' },
+  { value: 2, title: 'Level 2', detail: 'Approachable with a little stretch.' },
+  { value: 3, title: 'Level 3', detail: 'A balanced everyday challenge.' },
+  { value: 4, title: 'Level 4', detail: 'Demanding questions, steadily ordered.' },
+  { value: 5, title: 'Level 5', detail: 'The toughest range your setup offers.' },
+]
+
+function parseChallengeLevel(value: string): ChallengeLevel {
+  if (value === 'random') return 'random'
+  const numeric = Number(value)
+  return numeric >= 1 && numeric <= 5 && Number.isInteger(numeric) ? numeric as 1 | 2 | 3 | 4 | 5 : 'random'
+}
+
+function challengeDescription(challenge: ChallengeLevel): string {
+  return challenge === 'random'
+    ? 'Random keeps the original seeded mix and its existing personal history.'
+    : `Level ${challenge} starts at the approachable side of this level and builds upward. Difficulty is relative to your chosen settings.`
 }
 
 function formatNumber(value: number): string {
@@ -1822,6 +1943,12 @@ function formatNumber(value: number): string {
 function clampInteger(value: number, minimum: number, maximum: number): number {
   if (!Number.isFinite(value)) return minimum
   return Math.min(maximum, Math.max(minimum, Math.round(value)))
+}
+
+function completionPercent(session: TrainingSession | null): number {
+  if (!session || session.problems.length === 0) return 0
+  const complete = session.progress.filter((item) => item.status !== 'pending').length
+  return Math.round((complete / session.problems.length) * 10_000) / 100
 }
 
 function mascotMood(progress: TrainingSession['progress'][number]): string {

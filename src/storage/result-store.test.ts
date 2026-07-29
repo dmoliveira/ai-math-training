@@ -102,4 +102,82 @@ describe('IndexedDbResultStore', () => {
     expect(await store.clearConfig(first.configKey)).toEqual({ status: 'cleared' })
     expect((await store.listCompleted(first.configKey)).results).toEqual([])
   })
+
+  it('normalizes legacy Random history without mixing fixed challenge levels', async () => {
+    const store = createStore()
+    const legacy = resultAt(1_000, 1)
+    await store.saveCompleted(legacy)
+    const database = await openDatabase(`result-store-test-${databaseSequence}`)
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction('results', 'readwrite')
+      const objectStore = transaction.objectStore('results')
+      const request = objectStore.get(legacy.id)
+      request.onerror = () => reject(request.error)
+      request.onsuccess = () => {
+        const stored = request.result as { result: { config: Record<string, unknown> } }
+        delete stored.result.config.challenge
+        objectStore.put(stored)
+      }
+      transaction.oncomplete = () => resolve()
+      transaction.onabort = () => reject(transaction.error)
+    })
+
+    const randomPage = await store.listCompleted(legacy.configKey)
+    expect(randomPage.corruptRecords).toBe(0)
+    expect(randomPage.results[0]?.config.challenge).toBe('random')
+
+    const level = resultAt(2_000, 2, { ...DEFAULT_CONFIG, challenge: 3 })
+    await store.saveCompleted(level)
+    expect(level.configKey).not.toBe(legacy.configKey)
+    expect((await store.listCompleted(legacy.configKey)).results).toHaveLength(1)
+    expect((await store.listCompleted(level.configKey)).results).toHaveLength(1)
+
+    await store.clearConfig(legacy.configKey)
+    expect((await store.listCompleted(legacy.configKey)).results).toEqual([])
+    expect((await store.listCompleted(level.configKey)).results).toHaveLength(1)
+    database.close()
+  })
+
+  it('counts malformed nested result data without hanging history reads', async () => {
+    const store = createStore()
+    const first = resultAt(1_000, 1)
+    const second = resultAt(2_000, 2)
+    await store.saveCompleted(first)
+    await store.saveCompleted(second)
+    const database = await openDatabase(`result-store-test-${databaseSequence}`)
+    await mutateStoredResult(database, first.id, (result) => { delete result.config.operations })
+    await mutateStoredResult(database, second.id, (result) => { result.problems[0]!.operators = null })
+
+    const page = await store.listCompleted(first.configKey)
+    expect(page).toMatchObject({ status: 'ok', results: [], corruptRecords: 2 })
+    database.close()
+  })
 })
+
+function openDatabase(name: string): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(name)
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
+  })
+}
+
+function mutateStoredResult(
+  database: IDBDatabase,
+  id: string,
+  mutate: (result: { config: Record<string, unknown>; problems: Array<Record<string, unknown>> }) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction('results', 'readwrite')
+    const store = transaction.objectStore('results')
+    const request = store.get(id)
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => {
+      const stored = request.result as { result: { config: Record<string, unknown>; problems: Array<Record<string, unknown>> } }
+      mutate(stored.result)
+      store.put(stored)
+    }
+    transaction.oncomplete = () => resolve()
+    transaction.onabort = () => reject(transaction.error)
+  })
+}

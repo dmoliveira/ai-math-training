@@ -1,5 +1,6 @@
 import {
   isSprintResult,
+  normalizeSprintResult,
   type ResultPage,
   type ResultStore,
   type ResultStoreWriteResult,
@@ -323,20 +324,26 @@ function toStoredResult(result: SprintResult): StoredResult {
 }
 
 function readStoredResult(value: unknown): SprintResult | null {
-  if (typeof value !== 'object' || value === null) return null
-  const stored = value as Partial<StoredResult>
-  const result = stored.result
-  if (!isSprintResult(result)) return null
-  if (
-    stored.id !== result.id ||
-    stored.sessionId !== result.sessionId ||
-    stored.configKey !== result.configKey ||
-    stored.completedAt !== result.completedAt ||
-    stored.rankEligibleKey !== (result.rankEligible ? 1 : 0) ||
-    stored.scoredElapsedMs !== result.totals.scoredElapsedMs ||
-    stored.mistakes !== result.totals.mistakes
-  ) return null
-  return structuredClone(result)
+  try {
+    if (typeof value !== 'object' || value === null) return null
+    const stored = value as Partial<StoredResult>
+    const rawResult = stored.result
+    if (!isSprintResult(rawResult)) return null
+    const result = normalizeSprintResult(rawResult)
+    if (!result) return null
+    if (
+      stored.id !== result.id ||
+      stored.sessionId !== result.sessionId ||
+      stored.configKey !== result.configKey ||
+      stored.completedAt !== result.completedAt ||
+      stored.rankEligibleKey !== (result.rankEligible ? 1 : 0) ||
+      stored.scoredElapsedMs !== result.totals.scoredElapsedMs ||
+      stored.mistakes !== result.totals.mistakes
+    ) return null
+    return structuredClone(result)
+  } catch {
+    return null
+  }
 }
 
 function normalizeLimit(limit: number): number {

@@ -18,8 +18,9 @@ import {
 
 export const V1_STORAGE_KEY = 'ai-math-training:progress:v1'
 export const V2_STORAGE_KEY = 'ai-math-training:progress:v2'
-export const STORAGE_KEY = V2_STORAGE_KEY
-export const APP_SCHEMA_VERSION = 2
+export const V3_STORAGE_KEY = 'ai-math-training:progress:v3'
+export const STORAGE_KEY = V3_STORAGE_KEY
+export const APP_SCHEMA_VERSION = 3
 
 export type AppView = 'setup' | 'practice' | 'complete'
 
@@ -38,9 +39,11 @@ interface LegacyProblemProgress {
   feedback: 'none' | 'incorrect' | 'correct' | 'revealed'
 }
 
+type LegacyTrainingConfig = Omit<TrainingConfig, 'challenge'>
+
 interface LegacyTrainingSession {
   schemaVersion: 1
-  config: TrainingConfig
+  config: LegacyTrainingConfig
   seed: number
   problems: Problem[]
   progress: LegacyProblemProgress[]
@@ -55,7 +58,7 @@ interface LegacyTrainingSession {
 interface LegacyPersistedAppState {
   schemaVersion: 1
   view: AppView
-  settings: TrainingConfig
+  settings: LegacyTrainingConfig
   session: LegacyTrainingSession | null
 }
 
@@ -83,9 +86,11 @@ export class ProgressStore {
     if (!this.storage) return { status: 'unavailable', state: null }
 
     let currentRaw: string | null
+    let v2Raw: string | null
     let legacyRaw: string | null
     try {
-      currentRaw = this.storage.getItem(V2_STORAGE_KEY)
+      currentRaw = this.storage.getItem(V3_STORAGE_KEY)
+      v2Raw = this.storage.getItem(V2_STORAGE_KEY)
       legacyRaw = this.storage.getItem(V1_STORAGE_KEY)
     } catch {
       return { status: 'unavailable', state: null }
@@ -94,9 +99,17 @@ export class ProgressStore {
     if (currentRaw !== null) {
       const currentResult = parseLoadResult(currentRaw, parsePersistedState)
       if (currentResult.status === 'ok') return currentResult
-      if (legacyRaw === null) return currentResult
-    } else if (legacyRaw === null) {
+      if (v2Raw === null && legacyRaw === null) return currentResult
+    } else if (v2Raw === null && legacyRaw === null) {
       return { status: 'empty', state: null }
+    }
+
+    if (v2Raw !== null) {
+      const migratedV2 = parseLoadResult(v2Raw, (value) => parsePersistedState(upgradeV2State(value)))
+      if (migratedV2.status === 'ok') {
+        this.writeMigratedState(migratedV2.state)
+        return migratedV2
+      }
     }
 
     if (legacyRaw === null) return { status: 'invalid', state: null }
@@ -108,7 +121,7 @@ export class ProgressStore {
     if (!validated) return { status: 'invalid', state: null }
 
     try {
-      this.storage.setItem(V2_STORAGE_KEY, JSON.stringify(validated))
+      this.storage.setItem(V3_STORAGE_KEY, JSON.stringify(validated))
     } catch {
       // The validated in-memory migration is still safe to use; the v1 rollback snapshot remains intact.
     }
@@ -126,7 +139,7 @@ export class ProgressStore {
     }
 
     try {
-      this.storage.setItem(V2_STORAGE_KEY, JSON.stringify(safeState))
+      this.storage.setItem(V3_STORAGE_KEY, JSON.stringify(safeState))
       return true
     } catch {
       return false
@@ -136,7 +149,9 @@ export class ProgressStore {
   clear(): boolean {
     if (!this.storage) return false
     try {
+      this.storage.removeItem(V1_STORAGE_KEY)
       this.storage.removeItem(V2_STORAGE_KEY)
+      this.storage.removeItem(V3_STORAGE_KEY)
       return true
     } catch {
       return false
@@ -144,13 +159,14 @@ export class ProgressStore {
   }
 
   clearAll(): boolean {
-    if (!this.storage) return false
+    return this.clear()
+  }
+
+  private writeMigratedState(state: PersistedAppState): void {
     try {
-      this.storage.removeItem(V2_STORAGE_KEY)
-      this.storage.removeItem(V1_STORAGE_KEY)
-      return true
+      this.storage?.setItem(V3_STORAGE_KEY, JSON.stringify(state))
     } catch {
-      return false
+      // A validated in-memory migration remains usable and rollback snapshots stay untouched.
     }
   }
 }
@@ -174,13 +190,13 @@ export function parsePersistedState(value: unknown): PersistedAppState | null {
 
 function parseLegacyPersistedState(value: unknown): LegacyPersistedAppState | null {
   if (!isRecord(value) || value.schemaVersion !== 1) return null
-  if (!isAppView(value.view) || !isTrainingConfig(value.settings)) return null
+  if (!isAppView(value.view) || !isLegacyTrainingConfig(value.settings)) return null
   if (value.session !== null && !isLegacyTrainingSession(value.session)) return null
 
   return {
     schemaVersion: 1,
     view: value.view,
-    settings: cloneConfig(value.settings),
+    settings: cloneLegacyConfig(value.settings),
     session: value.session ? cloneLegacySessionAsPaused(value.session) : null,
   }
 }
@@ -190,14 +206,14 @@ function migrateLegacyState(value: LegacyPersistedAppState): PersistedAppState {
   return {
     schemaVersion: APP_SCHEMA_VERSION,
     view: value.view,
-    settings: cloneConfig(value.settings),
+    settings: migrateLegacyConfig(value.settings),
     preferences: { ...DEFAULT_PREFERENCES },
     session: session
       ? {
           schemaVersion: SESSION_SCHEMA_VERSION,
           mode: 'sprint',
           id: `legacy-${session.createdAt}-${session.seed}`,
-          config: cloneConfig(session.config),
+          config: migrateLegacyConfig(session.config),
           seed: session.seed,
           problems: session.problems.map(cloneProblem),
           progress: session.progress.map((item) => ({ ...item, activeElapsedMs: null })),
@@ -224,6 +240,23 @@ function parseLoadResult<T>(
   } catch {
     return { status: 'invalid', state: null }
   }
+}
+
+function upgradeV2State(value: unknown): unknown {
+  if (!isRecord(value) || value.schemaVersion !== 2) return null
+  const session = isRecord(value.session)
+    ? { ...value.session, config: upgradeLegacyConfig(value.session.config) }
+    : value.session
+  return {
+    ...value,
+    schemaVersion: APP_SCHEMA_VERSION,
+    settings: upgradeLegacyConfig(value.settings),
+    session,
+  }
+}
+
+function upgradeLegacyConfig(value: unknown): unknown {
+  return isRecord(value) ? { ...value, challenge: 'random' } : value
 }
 
 function isTrainingSession(value: unknown): value is TrainingSession {
@@ -264,7 +297,7 @@ function normalizeTrainingSession(value: unknown): TrainingSession | null {
 }
 
 function isLegacyTrainingSession(value: unknown): value is LegacyTrainingSession {
-  if (!isRecord(value) || value.schemaVersion !== 1 || !isTrainingConfig(value.config)) return false
+  if (!isRecord(value) || value.schemaVersion !== 1 || !isLegacyTrainingConfig(value.config)) return false
   if (!isInteger(value.seed, 0) || !Array.isArray(value.problems) || !Array.isArray(value.progress)) return false
   if (value.problems.length !== value.config.problemCount || value.progress.length !== value.problems.length) return false
   if (!value.problems.every(isProblem) || !value.progress.every(isLegacyProblemProgress)) return false
@@ -287,7 +320,7 @@ function hasValidLegacyProblemSequence(session: Pick<LegacyTrainingSession, 'con
   return hasValidProblemSequenceForConfig(session.config, session.problems)
 }
 
-function hasValidProblemSequenceForConfig(config: TrainingConfig, problems: Problem[]): boolean {
+function hasValidProblemSequenceForConfig(config: Omit<TrainingConfig, 'challenge'>, problems: Problem[]): boolean {
   const ids = new Set<string>()
   return problems.every((problem) => {
     if (ids.has(problem.id)) return false
@@ -384,8 +417,13 @@ function isPristineProgress(item: ProblemProgress): boolean {
 
 function isTrainingConfig(value: unknown): value is TrainingConfig {
   if (!isRecord(value) || typeof value.minDigits !== 'number' || typeof value.maxDigits !== 'number' || typeof value.operatorCount !== 'number' || typeof value.problemCount !== 'number' || (value.operationMode !== 'same' && value.operationMode !== 'mixed') || !Array.isArray(value.operations) || !value.operations.every(isOperation)) return false
-  const candidate: TrainingConfig = { minDigits: value.minDigits, maxDigits: value.maxDigits, operatorCount: value.operatorCount, operationMode: value.operationMode, operations: [...value.operations], problemCount: value.problemCount }
+  const candidate: TrainingConfig = { minDigits: value.minDigits, maxDigits: value.maxDigits, operatorCount: value.operatorCount, operationMode: value.operationMode, operations: [...value.operations], problemCount: value.problemCount, challenge: value.challenge as TrainingConfig['challenge'] }
   return validateConfig(candidate).length === 0
+}
+
+function isLegacyTrainingConfig(value: unknown): value is LegacyTrainingConfig {
+  if (!isRecord(value)) return false
+  return isTrainingConfig({ ...value, challenge: 'random' })
 }
 
 function cloneSessionAsPaused(session: TrainingSession): TrainingSession {
@@ -393,7 +431,7 @@ function cloneSessionAsPaused(session: TrainingSession): TrainingSession {
 }
 
 function cloneLegacySessionAsPaused(session: LegacyTrainingSession): LegacyTrainingSession {
-  return { ...session, config: cloneConfig(session.config), problems: session.problems.map(cloneProblem), progress: session.progress.map((item) => ({ ...item })), timerStartedAt: null }
+  return { ...session, config: cloneLegacyConfig(session.config), problems: session.problems.map(cloneProblem), progress: session.progress.map((item) => ({ ...item })), timerStartedAt: null }
 }
 
 function cloneProblem(problem: Problem): Problem {
@@ -402,6 +440,14 @@ function cloneProblem(problem: Problem): Problem {
 
 function cloneConfig(config: TrainingConfig): TrainingConfig {
   return { ...config, operations: [...config.operations] }
+}
+
+function cloneLegacyConfig(config: LegacyTrainingConfig): LegacyTrainingConfig {
+  return { ...config, operations: [...config.operations] }
+}
+
+function migrateLegacyConfig(config: LegacyTrainingConfig): TrainingConfig {
+  return { ...cloneLegacyConfig(config), challenge: 'random' }
 }
 
 function isOperation(value: unknown): value is Operation {

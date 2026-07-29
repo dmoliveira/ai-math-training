@@ -11,11 +11,19 @@ import {
 
 describe('Sprint contracts', () => {
   it('uses privacy-friendly, autoplay-safe preference defaults', () => {
-    expect(DEFAULT_PREFERENCES).toEqual({ orientation: 'horizontal', audioEnabled: false, theme: 'forest', density: 'comfortable' })
+    expect(DEFAULT_PREFERENCES).toEqual({ orientation: 'horizontal', audioEnabled: false, theme: 'forest', density: 'comfortable', autoAdvance: true })
     expect(isPracticePreferences(DEFAULT_PREFERENCES)).toBe(true)
     expect(isPracticePreferences({ orientation: 'diagonal', audioEnabled: false })).toBe(false)
-    expect(parsePracticePreferences({ orientation: 'vertical', audioEnabled: true })).toEqual({ orientation: 'vertical', audioEnabled: true, theme: 'forest', density: 'comfortable' })
-    expect(parsePracticePreferences({ ...DEFAULT_PREFERENCES, theme: 'midnight', density: 'compact' })).toEqual({ orientation: 'horizontal', audioEnabled: false, theme: 'midnight', density: 'compact' })
+    expect(parsePracticePreferences({ orientation: 'vertical', audioEnabled: true })).toEqual({ orientation: 'vertical', audioEnabled: true, theme: 'forest', density: 'comfortable', autoAdvance: true })
+    expect(parsePracticePreferences({ ...DEFAULT_PREFERENCES, theme: 'midnight', density: 'compact' })).toEqual({ orientation: 'horizontal', audioEnabled: false, theme: 'midnight', density: 'compact', autoAdvance: true })
+  })
+
+  it('keeps legacy and Random history together while isolating fixed challenge levels', () => {
+    const legacy = { ...DEFAULT_CONFIG } as Partial<typeof DEFAULT_CONFIG>
+    delete legacy.challenge
+    expect(configKey(legacy as Omit<typeof DEFAULT_CONFIG, 'challenge'>)).toBe(configKey(DEFAULT_CONFIG))
+    expect(configKey({ ...DEFAULT_CONFIG, challenge: 1 })).not.toBe(configKey(DEFAULT_CONFIG))
+    expect(configKey({ ...DEFAULT_CONFIG, challenge: 1 })).not.toBe(configKey({ ...DEFAULT_CONFIG, challenge: 2 }))
   })
 
   it('canonicalizes operation selection order in equivalent configuration keys', () => {
