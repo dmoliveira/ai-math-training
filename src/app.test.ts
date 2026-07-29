@@ -253,6 +253,9 @@ describe('MathTrainingApp lifecycle', () => {
 
     submitAnswer(root, answer)
     vi.advanceTimersByTime(0)
+    expect(root.dataset.motion).toBe('correct')
+    expect(root.style.getPropertyValue('--progress-from')).toBe('0%')
+    expect(root.style.getPropertyValue('--progress-to')).toBe('50%')
     expect(root.textContent).toContain('Correct.')
     expect(root.textContent).toContain('Question 1 of 2')
     expect(document.querySelector('#app-announcer')?.textContent).toBe('Correct. Moving to the next question.')
@@ -264,6 +267,8 @@ describe('MathTrainingApp lifecycle', () => {
     expect(root.textContent).toContain('Question 1 of 2')
     vi.advanceTimersByTime(1)
     expect(root.textContent).toContain('Question 2 of 2')
+    expect(root.dataset.motion).toBe('question-enter')
+    expect(root.style.getPropertyValue('--progress-from')).toBe('')
     expect(root.querySelector('#answer-input')).toBe(document.activeElement)
     vi.advanceTimersByTime(900)
     expect(root.textContent).toContain('Question 2 of 2')
@@ -433,6 +438,8 @@ describe('MathTrainingApp lifecycle', () => {
 
     now = 4_000
     root.querySelector<HTMLButtonElement>('[data-action="skip"]')!.click()
+    expect(root.dataset.motion).toBe('skip')
+    expect(root.style.getPropertyValue('--progress-to')).toBe('100%')
     expect(root.textContent).toContain('20 seconds added to your scored time')
     expect(root.querySelector<HTMLImageElement>('.numi--pose-encouraging')?.src).toContain('/numi/encouraging.webp')
     expect(root.textContent).toContain('100% complete')
@@ -443,6 +450,7 @@ describe('MathTrainingApp lifecycle', () => {
       new SubmitEvent('submit', { bubbles: true, cancelable: true }),
     )
     expect(root.textContent).toContain('Session complete.')
+    expect(root.dataset.motion).toBe('completion-enter')
     expect(root.querySelector<HTMLImageElement>('.numi--completion.numi--pose-encouraging')?.src).toContain('/numi/encouraging.webp')
     expect(root.textContent).not.toContain('Perfect run!')
     expect(root.textContent).toContain('Scored time')
@@ -521,6 +529,7 @@ describe('MathTrainingApp lifecycle', () => {
       app.start()
       expect(root.textContent).toContain(complete ? 'Review complete.' : 'Mistake-to-mastery review')
       if (complete) expect(root.querySelector<HTMLImageElement>('.numi--completion.numi--pose-encouraging')?.src).toContain('/numi/encouraging.webp')
+      if (complete) expect(root.dataset.motion).toBe('settled')
       expect(resultStore.saveCompleted).not.toHaveBeenCalled()
       expect(resultStore.listRanked).not.toHaveBeenCalled()
       expect(resultStore.listCompleted).not.toHaveBeenCalled()
@@ -734,6 +743,7 @@ describe('MathTrainingApp lifecycle', () => {
 
     root.querySelector<HTMLButtonElement>('[data-action="cycle-theme"]')!.click()
     expect(document.documentElement.dataset.theme).toBe('midnight')
+    expect(root.dataset.motion).toBe('settled')
     root.querySelector<HTMLButtonElement>('[data-action="toggle-density"]')!.click()
     expect(document.documentElement.dataset.density).toBe('compact')
     expect(store.save).toHaveBeenCalled()

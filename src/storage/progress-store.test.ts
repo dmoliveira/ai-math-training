@@ -328,6 +328,26 @@ describe('progress store', () => {
     expect(storage.values.has(V1_STORAGE_KEY)).toBe(false)
   })
 
+  it('keeps v3 authoritative when clearing an older rollback key fails', () => {
+    const storage = new MemoryStorage()
+    const currentStore = new ProgressStore(storage)
+    expect(currentStore.save(createState(), 2_000)).toBe(true)
+    storage.values.set(V1_STORAGE_KEY, 'legacy')
+    storage.values.set(V2_STORAGE_KEY, 'older')
+    const partialFailure: StorageLike = {
+      getItem: (key) => storage.getItem(key),
+      setItem: (key, value) => storage.setItem(key, value),
+      removeItem: (key) => {
+        if (key === V2_STORAGE_KEY) throw new DOMException('blocked')
+        storage.removeItem(key)
+      },
+    }
+
+    expect(new ProgressStore(partialFailure).clear()).toBe(false)
+    expect(storage.values.has(V3_STORAGE_KEY)).toBe(true)
+    expect(new ProgressStore(storage).load().status).toBe('ok')
+  })
+
   it('clears saved progress', () => {
     const storage = new MemoryStorage()
     const store = new ProgressStore(storage)

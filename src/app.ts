@@ -72,6 +72,14 @@ interface HistoryViewState {
   nextCursor: string | null
 }
 
+type MotionEvent = 'setup-enter' | 'practice-enter' | 'question-enter' | 'incorrect' | 'correct' | 'skip' | 'reveal' | 'resume-enter' | 'completion-enter'
+
+interface MotionIntent {
+  event: MotionEvent
+  progressFrom?: number
+  progressTo?: number
+}
+
 export class MathTrainingApp {
   private readonly root: HTMLElement
   private readonly store: StorePort
@@ -132,7 +140,7 @@ export class MathTrainingApp {
     window.addEventListener('beforeunload', this.handleBeforeUnload)
     this.timerId = window.setInterval(this.handleTimerTick, 250)
 
-    this.render()
+    this.render(this.state.view === 'setup' ? { event: 'setup-enter' } : this.state.view === 'practice' ? { event: 'practice-enter' } : undefined)
     if (this.currentResult) void this.persistCompletedResult(this.currentResult)
     else if (!(this.state.view !== 'setup' && this.state.session?.mode === 'review')) void this.refreshHistory()
     if (this.state.view !== 'setup') this.focusCurrentView()
@@ -160,6 +168,9 @@ export class MathTrainingApp {
     delete document.documentElement.dataset.theme
     delete document.documentElement.dataset.density
     delete this.root.dataset.view
+    delete this.root.dataset.motion
+    this.root.style.removeProperty('--progress-from')
+    this.root.style.removeProperty('--progress-to')
     this.started = false
   }
 
@@ -476,8 +487,16 @@ export class MathTrainingApp {
     }
   }
 
-  private render(): void {
+  private render(intent?: MotionIntent): void {
     this.root.dataset.view = this.state.view
+    this.root.dataset.motion = intent?.event ?? 'settled'
+    if (intent?.progressFrom !== undefined && intent.progressTo !== undefined) {
+      this.root.style.setProperty('--progress-from', `${intent.progressFrom}%`)
+      this.root.style.setProperty('--progress-to', `${intent.progressTo}%`)
+    } else {
+      this.root.style.removeProperty('--progress-from')
+      this.root.style.removeProperty('--progress-to')
+    }
     const content =
       this.state.view === 'practice' && this.state.session
         ? this.renderPractice(this.state.session)
@@ -1308,7 +1327,7 @@ export class MathTrainingApp {
     }
     this.notice = null
     this.persist(true)
-    this.render()
+    this.render({ event: 'practice-enter' })
     this.focusPracticeInput()
   }
 
@@ -1339,7 +1358,7 @@ export class MathTrainingApp {
     }
     this.notice = null
     this.persist(true)
-    this.render()
+    this.render({ event: 'practice-enter' })
     this.focusPracticeInput()
   }
 
@@ -1355,7 +1374,7 @@ export class MathTrainingApp {
     this.state = { ...this.state, view: 'practice', session: review }
     this.notice = null
     this.persist(true)
-    this.render()
+    this.render({ event: 'practice-enter' })
     this.announce(`Focused review started with ${review.problems.length} ${pluralize(review.problems.length, 'question')}. This round is unscored.`)
     this.focusPracticeInput()
   }
@@ -1370,7 +1389,7 @@ export class MathTrainingApp {
     }
     this.notice = null
     this.persist(true)
-    this.render()
+    this.render({ event: 'resume-enter' })
     this.focusPracticeInput()
   }
 
@@ -1390,7 +1409,7 @@ export class MathTrainingApp {
           message: 'Progress cannot be saved on this device. Practice still works in this tab.',
           tone: 'warning',
         }
-    this.render()
+    this.render({ event: 'resume-enter' })
     void this.refreshHistory()
     this.announce(this.notice.message)
     this.focusCurrentView()
@@ -1403,7 +1422,7 @@ export class MathTrainingApp {
     this.state = { ...this.state, view: 'setup', session: null }
     this.notice = { message: 'Saved session discarded. Your settings are still here.', tone: 'info' }
     this.persist(true)
-    this.render()
+    this.render({ event: 'setup-enter' })
     void this.refreshHistory()
     this.focusCurrentView()
   }
@@ -1415,7 +1434,7 @@ export class MathTrainingApp {
     this.state = { ...this.state, view: 'setup', session: null }
     this.notice = null
     this.persist(true)
-    this.render()
+    this.render({ event: 'setup-enter' })
     void this.refreshHistory()
     this.focusCurrentView()
   }
@@ -1443,7 +1462,9 @@ export class MathTrainingApp {
       this.state = { ...this.state, session: checkedSession }
       this.playCue(checkedSession.progress[checkedSession.currentIndex]?.status === 'pending' ? 'incorrect' : 'correct')
       this.persist(true)
-      this.render()
+      const progressFrom = completionPercent(session)
+      const progressTo = completionPercent(checkedSession)
+      this.render({ event: checkedSession.progress[checkedSession.currentIndex]?.status === 'pending' ? 'incorrect' : 'correct', progressFrom, progressTo })
       const checkedProgress = checkedSession.progress[checkedSession.currentIndex]
       if (checkedProgress?.status === 'pending') {
         this.announce('Incorrect. Try again.')
@@ -1481,7 +1502,7 @@ export class MathTrainingApp {
       }
     }
     this.persist(true)
-    this.render()
+    this.render(advanced.completedAt === null ? { event: 'question-enter' } : { event: 'completion-enter' })
     if (this.currentResult && advanced.mode === 'sprint' && advanced.completedAt !== null && session.completedAt === null) void this.persistCompletedResult(this.currentResult)
     this.focusCurrentView()
   }
@@ -1520,13 +1541,14 @@ export class MathTrainingApp {
   }
 
   private confirmReveal(): void {
-    if (!this.state.session) return
-    const revealedSession = revealCurrentAnswer(this.state.session, this.now())
-    if (revealedSession === this.state.session) return
+    const session = this.state.session
+    if (!session) return
+    const revealedSession = revealCurrentAnswer(session, this.now())
+    if (revealedSession === session) return
     this.playCue('reveal')
     this.state = { ...this.state, session: revealedSession }
     this.persist(true)
-    this.render()
+    this.render({ event: 'reveal', progressFrom: completionPercent(session), progressTo: completionPercent(revealedSession) })
     const answer = revealedSession.problems[revealedSession.currentIndex]?.answer ?? ''
     this.announce(`Answer revealed: ${answer}.`)
     document.getElementById('primary-action')?.focus()
@@ -1540,7 +1562,7 @@ export class MathTrainingApp {
     this.state = { ...this.state, session: skipped }
     this.playCue('skip')
     this.persist(true)
-    this.render()
+    this.render({ event: 'skip', progressFrom: completionPercent(session), progressTo: completionPercent(skipped) })
     const isLast = skipped.currentIndex === skipped.problems.length - 1
     const reviewMessage = session.mode === 'review' ? ' It stays in this unscored review.' : ' 20 seconds added.'
     this.announce(`Question skipped.${reviewMessage} ${isLast ? (session.mode === 'review' ? 'Finish your review.' : 'See your results.') : 'Next question.'}`)
@@ -1921,6 +1943,12 @@ function formatNumber(value: number): string {
 function clampInteger(value: number, minimum: number, maximum: number): number {
   if (!Number.isFinite(value)) return minimum
   return Math.min(maximum, Math.max(minimum, Math.round(value)))
+}
+
+function completionPercent(session: TrainingSession | null): number {
+  if (!session || session.problems.length === 0) return 0
+  const complete = session.progress.filter((item) => item.status !== 'pending').length
+  return Math.round((complete / session.problems.length) * 10_000) / 100
 }
 
 function mascotMood(progress: TrainingSession['progress'][number]): string {

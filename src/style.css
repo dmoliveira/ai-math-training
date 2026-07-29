@@ -738,7 +738,8 @@
 
   .operation-choice input,
   .segmented-control input,
-  .mode-card input {
+  .mode-card input,
+  .challenge-card input {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -1714,7 +1715,6 @@
 
   .celebration__ring {
     border: 7px solid var(--primary-soft);
-    animation: ring-in 500ms ease-out both;
   }
 
   .celebration__mark {
@@ -1725,7 +1725,6 @@
     color: #fff;
     font-size: 2.8rem;
     font-weight: 850;
-    animation: mark-in 440ms 100ms cubic-bezier(0.2, 1.4, 0.4, 1) both;
   }
 
   .celebration i {
@@ -1738,7 +1737,6 @@
     border-radius: 8px;
     background: var(--gold);
     transform: rotate(var(--angle)) translateY(-57px);
-    animation: ray-in 460ms calc(var(--i) * 30ms) ease-out both;
   }
 
   .celebration i:nth-of-type(2n) {
@@ -2389,6 +2387,8 @@
     .operation-choice:has(input:checked),
     .segmented-control input:checked + span,
     .mode-card input:checked + .mode-card__body,
+    .challenge-card input:checked + span,
+    .auto-next-toggle[aria-pressed="true"],
     .preset[aria-pressed="true"],
     .practice-preset[aria-pressed="true"] {
       outline: 3px solid Highlight;
@@ -2402,6 +2402,8 @@
     .operation-choice:has(input:focus-visible),
     .segmented-control input:focus-visible + span,
     .mode-card input:focus-visible + .mode-card__body,
+    .challenge-card input:focus-visible + span,
+    .auto-next-toggle:focus-visible,
     .preset:focus-visible,
     .practice-preset:focus-visible {
       outline: 3px solid Highlight;
@@ -2898,7 +2900,6 @@
   width: clamp(205px, 40%, 290px);
   right: 3%;
   bottom: -10px;
-  animation: numi-float 4s ease-in-out infinite;
 }
 
 .mascot-stage p {
@@ -3033,14 +3034,6 @@
   font-weight: 700;
 }
 
-.mascot-coach--correct .numi {
-  animation: numi-hop 520ms ease;
-}
-
-.mascot-coach--incorrect .numi {
-  animation: numi-reassure 420ms ease;
-}
-
 .mascot-coach--correct {
   border-color: var(--success);
   background: var(--success-soft);
@@ -3055,13 +3048,76 @@
   width: 140px;
   height: 140px;
   margin: -64px auto 0;
-  animation: numi-arrive 700ms cubic-bezier(.2,.8,.2,1) both;
 }
 
-.page-shell > section,
-.page-shell > article,
-.setup-column > * {
-  animation: view-rise 420ms cubic-bezier(.2,.75,.2,1) both;
+#app[data-motion="setup-enter"] .setup-hero,
+#app[data-motion="setup-enter"] .practice-presets,
+#app[data-motion="setup-enter"] .settings-card {
+  animation: surface-settle 320ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+#app[data-motion="practice-enter"] .practice-card,
+#app[data-motion="practice-enter"] .session-toolbar,
+#app[data-motion="resume-enter"] .practice-card,
+#app[data-motion="resume-enter"] .resume-card {
+  animation: surface-settle 240ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+#app[data-motion="question-enter"] .problem-panel > * {
+  animation: question-arrive 180ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+#app[data-motion="incorrect"] .answer-feedback,
+#app[data-motion="correct"] .answer-feedback,
+#app[data-motion="skip"] .answer-feedback,
+#app[data-motion="reveal"] .answer-feedback {
+  animation: feedback-arrive 160ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+#app[data-motion="incorrect"] .mascot-coach--incorrect .numi {
+  animation: numi-reassure 260ms cubic-bezier(.2,.8,.2,1);
+}
+
+#app[data-motion="correct"] .mascot-coach--correct .numi {
+  animation: numi-hop 360ms cubic-bezier(.2,.8,.2,1);
+}
+
+#app[data-motion="correct"] .answer-lock {
+  animation: mark-pop 220ms cubic-bezier(.2,1.35,.3,1) both;
+}
+
+#app[data-motion="correct"] .question-dot--current,
+#app[data-motion="skip"] .question-dot--current,
+#app[data-motion="reveal"] .question-dot--current {
+  animation: dot-earned 180ms cubic-bezier(.2,1.3,.3,1) both;
+}
+
+#app[data-motion="completion-enter"] .completion-card {
+  animation: completion-fade 180ms ease-out both;
+}
+
+#app[data-motion="completion-enter"] .numi--completion {
+  animation: numi-arrive 460ms 80ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+#app[data-motion="completion-enter"] .celebration__ring {
+  animation: ring-in 420ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+#app[data-motion="completion-enter"] .celebration__mark {
+  animation: mark-in 420ms cubic-bezier(.2,1.25,.3,1) both;
+}
+
+#app[data-motion="completion-enter"] .celebration i {
+  animation: ray-in 420ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+#app[data-motion="completion-enter"] .learning-milestones li > span {
+  animation: mark-pop 220ms cubic-bezier(.2,1.25,.3,1) both;
+}
+
+#app[data-motion="completion-enter"] .next-mission {
+  animation: mission-emphasis 280ms 140ms ease-out both;
 }
 
 .progress-track span {
@@ -3075,7 +3131,18 @@
   background: linear-gradient(90deg, transparent, rgb(255 255 255 / 35%), transparent);
   content: "";
   transform: translateX(-100%);
-  animation: progress-glint 2.8s ease-in-out infinite;
+}
+
+#app[data-motion="correct"] .progress-track span,
+#app[data-motion="skip"] .progress-track span,
+#app[data-motion="reveal"] .progress-track span {
+  animation: progress-earned 260ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+#app[data-motion="correct"] .progress-track span::after,
+#app[data-motion="skip"] .progress-track span::after,
+#app[data-motion="reveal"] .progress-track span::after {
+  animation: progress-sheen 360ms ease-out both;
 }
 
 :root[data-density="compact"] .site-header__inner {
@@ -3154,19 +3221,49 @@
   min-height: 48px;
 }
 
-@keyframes view-rise {
-  from { opacity: 0; transform: translateY(10px); }
+@keyframes surface-settle {
+  from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes numi-float {
-  0%, 100% { transform: translateY(0) rotate(-1deg); }
-  50% { transform: translateY(-9px) rotate(1deg); }
+@keyframes question-arrive {
+  from { opacity: 0; transform: translateX(8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes feedback-arrive {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes completion-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes mark-pop {
+  from { transform: scale(.8); }
+  to { transform: scale(1); }
+}
+
+@keyframes dot-earned {
+  from { transform: scale(.86); }
+  to { transform: scale(1); }
+}
+
+@keyframes mission-emphasis {
+  from { box-shadow: 0 0 0 0 rgb(36 92 79 / 0%); }
+  to { box-shadow: 0 0 0 5px rgb(36 92 79 / 8%); }
+}
+
+@keyframes progress-earned {
+  from { width: var(--progress-from); }
+  to { width: var(--progress-to); }
 }
 
 @keyframes numi-hop {
   0%, 100% { transform: translateY(0) scale(1); }
-  45% { transform: translateY(-10px) scale(1.05); }
+  45% { transform: translateY(-7px) scale(1.04); }
 }
 
 @keyframes numi-reassure {
@@ -3175,13 +3272,13 @@
 }
 
 @keyframes numi-arrive {
-  from { opacity: 0; transform: translateY(18px) scale(.78) rotate(-8deg); }
+  from { opacity: 0; transform: translateY(10px) scale(.92); }
   to { opacity: 1; transform: translateY(0) scale(1) rotate(0); }
 }
 
-@keyframes progress-glint {
-  0%, 65% { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
+@keyframes progress-sheen {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
 }
 
 @media (max-width: 760px) {
@@ -3388,16 +3485,32 @@
 
 @media (prefers-reduced-motion: reduce) {
   .numi,
-  .page-shell > section,
-  .page-shell > article,
-  .setup-column > *,
-  .progress-track span::after {
+  #app[data-motion] .setup-hero,
+  #app[data-motion] .practice-presets,
+  #app[data-motion] .settings-card,
+  #app[data-motion] .practice-card,
+  #app[data-motion] .session-toolbar,
+  #app[data-motion] .resume-card,
+  #app[data-motion] .problem-panel > *,
+  #app[data-motion] .answer-feedback,
+  #app[data-motion] .answer-lock,
+  #app[data-motion] .question-dot,
+  #app[data-motion] .completion-card,
+  #app[data-motion] .celebration__ring,
+  #app[data-motion] .celebration__mark,
+  #app[data-motion] .celebration i,
+  #app[data-motion] .learning-milestones li > span,
+  #app[data-motion] .next-mission,
+  #app[data-motion] .progress-track span,
+  #app[data-motion] .progress-track span::after {
     animation: none !important;
   }
 
   .icon-button,
   .theme-choice > span,
-  .numi--coach {
+  .numi--coach,
+  .challenge-card > span,
+  .auto-next-toggle {
     transition: none !important;
   }
 }

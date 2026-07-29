@@ -149,9 +149,9 @@ export class ProgressStore {
   clear(): boolean {
     if (!this.storage) return false
     try {
-      this.storage.removeItem(V3_STORAGE_KEY)
-      this.storage.removeItem(V2_STORAGE_KEY)
       this.storage.removeItem(V1_STORAGE_KEY)
+      this.storage.removeItem(V2_STORAGE_KEY)
+      this.storage.removeItem(V3_STORAGE_KEY)
       return true
     } catch {
       return false
@@ -159,15 +159,7 @@ export class ProgressStore {
   }
 
   clearAll(): boolean {
-    if (!this.storage) return false
-    try {
-      this.storage.removeItem(V2_STORAGE_KEY)
-      this.storage.removeItem(V1_STORAGE_KEY)
-      this.storage.removeItem(V3_STORAGE_KEY)
-      return true
-    } catch {
-      return false
-    }
+    return this.clear()
   }
 
   private writeMigratedState(state: PersistedAppState): void {
