@@ -17,7 +17,7 @@ export const DEFAULT_MAX_RESULTS_PER_CONFIG = 500
 const DEFAULT_PAGE_SIZE = 25
 const MAX_PAGE_SIZE = 100
 const MAX_RECENT_RESULTS = 500
-export const MAX_CURSOR_SCAN_COUNT = 1_000
+export const MAX_CURSOR_SCAN_COUNT = 600
 const MAX_PRUNE_PER_WRITE = 500
 
 type StoredResult = {
