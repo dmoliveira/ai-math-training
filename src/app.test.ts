@@ -103,6 +103,46 @@ describe('MathTrainingApp lifecycle', () => {
     app.destroy()
   })
 
+  it('navigates between Practice and Progress without persisting UI-only state', () => {
+    const store = createStore({ status: 'empty', state: null })
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store, now: () => 1_000 })
+    app.start()
+
+    expect(root.querySelector('[data-action="show-practice"]')?.getAttribute('aria-current')).toBe('page')
+    root.querySelector<HTMLButtonElement>('[data-action="show-progress"]')!.click()
+    expect(root.dataset.section).toBe('progress')
+    expect(document.activeElement?.id).toBe('progress-heading')
+    expect(root.querySelector('[data-action="show-progress"]')?.getAttribute('aria-current')).toBe('page')
+    const saved = store.save.mock.calls.at(-1)![0] as PersistedAppState
+    expect(Object.keys(saved).sort()).toEqual(['preferences', 'schemaVersion', 'session', 'settings', 'view'])
+
+    root.querySelector<HTMLButtonElement>('[data-action="show-practice"]')!.click()
+    expect(root.dataset.section).toBe('practice')
+    expect(document.activeElement?.id).toBe('setup-heading')
+    app.destroy()
+  })
+
+  it('preserves disclosure state and focused controls across setup rerenders', () => {
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store: createStore({ status: 'empty', state: null }), now: () => 1_000 })
+    app.start()
+    for (const id of ['customize-setup', 'advanced-setup']) {
+      const details = root.querySelector<HTMLDetailsElement>(`#${id}`)!
+      details.open = true
+      details.dispatchEvent(new Event('toggle'))
+    }
+    const maxDigits = root.querySelector<HTMLSelectElement>('#maxDigits')!
+    maxDigits.focus()
+    maxDigits.value = '4'
+    maxDigits.dispatchEvent(new Event('change', { bubbles: true }))
+
+    expect(root.querySelector<HTMLDetailsElement>('#customize-setup')?.open).toBe(true)
+    expect(root.querySelector<HTMLDetailsElement>('#advanced-setup')?.open).toBe(true)
+    expect(document.activeElement?.id).toBe('maxDigits')
+    app.destroy()
+  })
+
   it('starts a complete guided preset with one click', () => {
     const store = createStore({ status: 'empty', state: null })
     const root = document.querySelector<HTMLElement>('#app')!
@@ -186,6 +226,7 @@ describe('MathTrainingApp lifecycle', () => {
     maxDigits.value = '3'
     maxDigits.dispatchEvent(new Event('change', { bubbles: true }))
     await vi.waitFor(() => expect(resultStore.listCompleted).toHaveBeenCalledTimes(2))
+    root.querySelector<HTMLButtonElement>('[data-action="show-progress"]')!.click()
     await vi.waitFor(() => expect(root.textContent).toContain('No completed results yet.'))
     resolveOld({ ...emptyResultPage(), results: [oldResult] })
     await Promise.resolve()
@@ -201,13 +242,15 @@ describe('MathTrainingApp lifecycle', () => {
     const root = document.querySelector<HTMLElement>('#app')!
     const app = new MathTrainingApp(root, { store: createStore({ status: 'empty', state: null }), resultStore, now: () => 1_000 })
     app.start()
-    await vi.waitFor(() => expect(root.textContent).toContain('No completed results yet.'))
 
     const input = root.querySelector<HTMLInputElement>('#problem-count')!
     input.value = '7'
     input.dispatchEvent(new Event('input', { bubbles: true }))
 
     await vi.waitFor(() => expect(resultStore.listCompleted).toHaveBeenCalledTimes(2))
+    root.querySelector<HTMLButtonElement>('[data-action="show-progress"]')!.click()
+    await vi.waitFor(() => expect(root.textContent).toContain('No completed results yet.'))
+    root.querySelector<HTMLButtonElement>('[data-action="show-practice"]')!.click()
     expect(root.textContent).toContain('Custom setup')
     expect(root.querySelector('#setup-example-host')?.textContent).toContain('7 questions')
     expect(root.querySelector('[data-action="start-preset"][aria-pressed="true"]')).toBeNull()
@@ -353,6 +396,7 @@ describe('MathTrainingApp lifecycle', () => {
     const problemCount = root.querySelector<HTMLInputElement>('#problem-count')!
     problemCount.value = '1'
     problemCount.dispatchEvent(new Event('input', { bubbles: true }))
+    root.querySelector<HTMLButtonElement>('[data-action="show-progress"]')!.click()
     await vi.waitFor(() => expect(root.querySelector('[data-action="start-history-review"]')).not.toBeNull())
     root.querySelector<HTMLButtonElement>('[data-action="start-history-review"]')!.click()
     expect(root.querySelector('.review-mode-badge')?.textContent).toContain('Unscored')
@@ -729,6 +773,30 @@ describe('MathTrainingApp lifecycle', () => {
     app.destroy()
   })
 
+  it('waits for a delayed completion save before showing refreshed Progress history', async () => {
+    let resolveSave: (result: ResultStoreWriteResult) => void = () => undefined
+    let savedResult: ReturnType<typeof createSprintResult> = null
+    const save = new Promise<ResultStoreWriteResult>((resolve) => { resolveSave = resolve })
+    const resultStore = createResultStore()
+    resultStore.saveCompleted = vi.fn(async (result) => { savedResult = result; return await save })
+    resultStore.listCompleted = vi.fn(async () => ({ ...emptyResultPage(), results: savedResult ? [savedResult] : [] }))
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store: createStore({ status: 'ok', state: createPracticeState() }), resultStore, now: () => 2_000 })
+    app.start()
+    await Promise.resolve()
+    vi.mocked(resultStore.listCompleted).mockClear()
+    root.querySelector<HTMLButtonElement>('[data-action="skip"]')!.click()
+    root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    root.querySelector<HTMLButtonElement>('[data-action="view-progress"]')!.click()
+
+    expect(document.activeElement?.id).toBe('progress-heading')
+    expect(resultStore.listCompleted).not.toHaveBeenCalled()
+    resolveSave({ status: 'saved' })
+    await vi.waitFor(() => expect(root.querySelectorAll('.history-list li')).toHaveLength(1))
+    expect(resultStore.listCompleted).toHaveBeenCalledOnce()
+    app.destroy()
+  })
+
   it('surfaces corrupt records discovered while loading another history page', async () => {
     const resultStore = createResultStore()
     const listCompleted = vi.fn()
@@ -738,6 +806,7 @@ describe('MathTrainingApp lifecycle', () => {
     const root = document.querySelector<HTMLElement>('#app')!
     const app = new MathTrainingApp(root, { store: createStore({ status: 'empty', state: null }), resultStore, now: () => 2_000 })
     app.start()
+    root.querySelector<HTMLButtonElement>('[data-action="show-progress"]')!.click()
     await vi.waitFor(() => expect(root.querySelector('[data-action="load-history"]')).not.toBeNull())
     root.querySelector<HTMLButtonElement>('[data-action="load-history"]')!.click()
     await vi.waitFor(() => expect(root.textContent).toContain('History is unavailable'))
@@ -800,13 +869,15 @@ describe('MathTrainingApp lifecycle', () => {
     app.start()
     expect(document.documentElement.dataset.theme).toBe('forest')
     expect(document.documentElement.dataset.density).toBe('comfortable')
-    expect(root.querySelector<HTMLAnchorElement>('[aria-label^="Author Bio"]')?.textContent).toContain('Bio')
+    expect(root.querySelector('.footer-links')?.textContent).toContain('Bio')
 
     root.querySelector<HTMLButtonElement>('[data-action="cycle-theme"]')!.click()
     expect(document.documentElement.dataset.theme).toBe('midnight')
+    expect(root.querySelector('.appearance-menu > summary')).toBe(document.activeElement)
     expect(root.dataset.motion).toBe('settled')
     root.querySelector<HTMLButtonElement>('[data-action="toggle-density"]')!.click()
     expect(document.documentElement.dataset.density).toBe('compact')
+    expect(root.querySelector('.appearance-menu > summary')).toBe(document.activeElement)
     expect(store.save).toHaveBeenCalled()
 
     app.destroy()
