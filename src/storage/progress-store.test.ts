@@ -9,6 +9,7 @@ import {
   STORAGE_KEY,
   V1_STORAGE_KEY,
   V2_STORAGE_KEY,
+  V3_STORAGE_KEY,
   type PersistedAppState,
   type StorageLike,
 } from './progress-store'
@@ -36,6 +37,29 @@ const createState = (): PersistedAppState => ({
   preferences: { ...DEFAULT_PREFERENCES },
   session: createTrainingSession({ ...DEFAULT_CONFIG, problemCount: 1 }, 42, 1_000),
 })
+
+function createV2State(): Record<string, unknown> {
+  const state = structuredClone(createState()) as unknown as Record<string, unknown>
+  state.schemaVersion = 2
+  const settings = state.settings as Record<string, unknown>
+  delete settings.challenge
+  const preferences = state.preferences as Record<string, unknown>
+  delete preferences.autoAdvance
+  const session = state.session as Record<string, unknown>
+  delete (session.config as Record<string, unknown>).challenge
+  return state
+}
+
+function legacyConfig(config: typeof DEFAULT_CONFIG): Omit<typeof DEFAULT_CONFIG, 'challenge'> {
+  return {
+    minDigits: config.minDigits,
+    maxDigits: config.maxDigits,
+    operatorCount: config.operatorCount,
+    operationMode: config.operationMode,
+    operations: [...config.operations],
+    problemCount: config.problemCount,
+  }
+}
 
 describe('progress store', () => {
   it('round-trips a valid state and stores a paused timer snapshot', () => {
@@ -137,18 +161,17 @@ describe('progress store', () => {
 
   it('rejects exact sessions whose aggregate and per-problem elapsed times disagree', () => {
     const storage = new MemoryStorage()
-    const state = createState()
-    if (!state.session) return
-    state.session.elapsedMs = 10
-    state.session.progress[0]!.activeElapsedMs = 20
+    const state = createV2State()
+    const session = state.session as Record<string, unknown>
+    session.elapsedMs = 10
+    ;(session.progress as Array<Record<string, unknown>>)[0]!.activeElapsedMs = 20
     storage.values.set(V2_STORAGE_KEY, JSON.stringify(state))
     expect(new ProgressStore(storage).load()).toEqual({ status: 'invalid', state: null })
   })
 
   it('upgrades appearance defaults in existing v2 preference records', () => {
     const storage = new MemoryStorage()
-    const state = createState()
-    const serialized = structuredClone(state) as unknown as { preferences: Record<string, unknown> }
+    const serialized = createV2State() as unknown as { preferences: Record<string, unknown> }
     delete serialized.preferences.theme
     delete serialized.preferences.density
     storage.values.set(V2_STORAGE_KEY, JSON.stringify(serialized))
@@ -157,7 +180,7 @@ describe('progress store', () => {
 
   it('normalizes missing session mode, round-trips review mode, and rejects unknown modes', () => {
     const storage = new MemoryStorage()
-    const withoutMode = structuredClone(createState()) as unknown as { session: Record<string, unknown> }
+    const withoutMode = createV2State() as unknown as { session: Record<string, unknown> }
     delete withoutMode.session.mode
     storage.values.set(V2_STORAGE_KEY, JSON.stringify(withoutMode))
     expect(new ProgressStore(storage).load().state?.session?.mode).toBe('sprint')
@@ -172,7 +195,9 @@ describe('progress store', () => {
 
     const invalid = structuredClone(state) as unknown as { session: Record<string, unknown> }
     invalid.session.mode = 'challenge'
-    storage.values.set(V2_STORAGE_KEY, JSON.stringify(invalid))
+    storage.values.delete(V2_STORAGE_KEY)
+    storage.values.delete(V1_STORAGE_KEY)
+    storage.values.set(STORAGE_KEY, JSON.stringify(invalid))
     expect(new ProgressStore(storage).load()).toEqual({ status: 'invalid', state: null })
   })
 
@@ -204,7 +229,7 @@ describe('progress store', () => {
     const session = pauseSession(createTrainingSession({ ...DEFAULT_CONFIG, problemCount: 1 }, 42, 1_000), 4_000)
     const legacySession = {
       schemaVersion: 1,
-      config: session.config,
+      config: legacyConfig(session.config),
       seed: session.seed,
       problems: session.problems,
       progress: session.progress.map((item) => ({
@@ -223,7 +248,7 @@ describe('progress store', () => {
     const legacyRaw = JSON.stringify({
       schemaVersion: 1,
       view: 'practice',
-      settings: session.config,
+      settings: legacyConfig(session.config),
       session: legacySession,
     })
     storage.values.set(V1_STORAGE_KEY, legacyRaw)
@@ -240,7 +265,7 @@ describe('progress store', () => {
     })
     expect(loaded.state?.session?.progress[0]?.activeElapsedMs).toBeNull()
     expect(storage.values.get(V1_STORAGE_KEY)).toBe(legacyRaw)
-    expect(storage.values.has(V2_STORAGE_KEY)).toBe(true)
+    expect(storage.values.has(V3_STORAGE_KEY)).toBe(true)
   })
 
   it('keeps valid v1 data when v2 is invalid or migration persistence fails', () => {
@@ -249,10 +274,10 @@ describe('progress store', () => {
     const legacyRaw = JSON.stringify({
       schemaVersion: 1,
       view: 'practice',
-      settings: session.config,
+      settings: legacyConfig(session.config),
       session: {
         schemaVersion: 1,
-        config: session.config,
+        config: legacyConfig(session.config),
         seed: session.seed,
         problems: session.problems,
         progress: session.progress.map((item) => ({
@@ -288,15 +313,17 @@ describe('progress store', () => {
     expect(source.values.get(V1_STORAGE_KEY)).toBe(legacyRaw)
   })
 
-  it('clears v2 separately from the destructive all-data reset', () => {
+  it('clears every progress version without allowing rollback resurrection', () => {
     const storage = new MemoryStorage()
     storage.values.set(V1_STORAGE_KEY, 'legacy')
     storage.values.set(V2_STORAGE_KEY, 'current')
+    storage.values.set(V3_STORAGE_KEY, 'newest')
     const store = new ProgressStore(storage)
 
     expect(store.clear()).toBe(true)
     expect(storage.values.has(V2_STORAGE_KEY)).toBe(false)
-    expect(storage.values.get(V1_STORAGE_KEY)).toBe('legacy')
+    expect(storage.values.has(V1_STORAGE_KEY)).toBe(false)
+    expect(storage.values.has(V3_STORAGE_KEY)).toBe(false)
     expect(store.clearAll()).toBe(true)
     expect(storage.values.has(V1_STORAGE_KEY)).toBe(false)
   })

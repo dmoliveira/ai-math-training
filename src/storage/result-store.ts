@@ -1,5 +1,6 @@
 import {
   isSprintResult,
+  normalizeSprintResult,
   type ResultPage,
   type ResultStore,
   type ResultStoreWriteResult,
@@ -325,8 +326,10 @@ function toStoredResult(result: SprintResult): StoredResult {
 function readStoredResult(value: unknown): SprintResult | null {
   if (typeof value !== 'object' || value === null) return null
   const stored = value as Partial<StoredResult>
-  const result = stored.result
-  if (!isSprintResult(result)) return null
+  const rawResult = stored.result
+  if (!isSprintResult(rawResult)) return null
+  const result = normalizeSprintResult(rawResult)
+  if (!result) return null
   if (
     stored.id !== result.id ||
     stored.sessionId !== result.sessionId ||

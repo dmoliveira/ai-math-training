@@ -11,8 +11,8 @@ import {
   type StoreLoadResult,
 } from './storage/progress-store'
 
-const createPracticeState = (): PersistedAppState => {
-  const config = { ...DEFAULT_CONFIG, operations: [...DEFAULT_CONFIG.operations], problemCount: 1 }
+const createPracticeState = (problemCount = 1): PersistedAppState => {
+  const config = { ...DEFAULT_CONFIG, operations: [...DEFAULT_CONFIG.operations], problemCount }
   const session = pauseSession(createTrainingSession(config, 42, 1_000), 1_000)
   return {
     schemaVersion: APP_SCHEMA_VERSION,
@@ -45,6 +45,13 @@ const createResultStore = (): ResultStore => ({
   listCompletedSince: vi.fn(async () => emptyResultPage()),
   clearConfig: vi.fn(async () => ({ status: 'cleared' as const })),
 })
+
+function submitAnswer(root: HTMLElement, answer: string): void {
+  const input = root.querySelector<HTMLInputElement>('#answer-input')!
+  input.value = answer
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+}
 
 function setVisibility(value: DocumentVisibilityState): void {
   Object.defineProperty(document, 'visibilityState', { configurable: true, value })
@@ -107,7 +114,7 @@ describe('MathTrainingApp lifecycle', () => {
 
     const saved = store.save.mock.calls.at(-1)![0] as PersistedAppState
     expect(saved.view).toBe('practice')
-    expect(saved.settings).toEqual({ minDigits: 1, maxDigits: 1, operatorCount: 1, operationMode: 'same', operations: ['add', 'subtract'], problemCount: 5 })
+    expect(saved.settings).toEqual({ minDigits: 1, maxDigits: 1, operatorCount: 1, operationMode: 'same', operations: ['add', 'subtract'], problemCount: 5, challenge: 1 })
     expect(saved.session?.config).toEqual(saved.settings)
     expect(root.querySelector('#answer-form')).not.toBeNull()
     app.destroy()
@@ -234,6 +241,70 @@ describe('MathTrainingApp lifecycle', () => {
 
     app.destroy()
     expect(announcer.isConnected).toBe(false)
+  })
+
+  it('shows correct feedback, then advances exactly once after 900ms', () => {
+    const state = createPracticeState(2)
+    const answer = state.session!.problems[0]!.answer
+    const store = createStore({ status: 'ok', state })
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store, now: () => 2_000 })
+    app.start()
+
+    submitAnswer(root, answer)
+    vi.advanceTimersByTime(0)
+    expect(root.textContent).toContain('Correct.')
+    expect(root.textContent).toContain('Question 1 of 2')
+    expect(document.querySelector('#app-announcer')?.textContent).toBe('Correct. Moving to the next question.')
+    expect(root.querySelector('#answer-input')?.hasAttribute('readonly')).toBe(true)
+    const saved = store.save.mock.calls.at(-1)![0] as PersistedAppState
+    expect(saved.session?.progress[0]?.status).toBe('correct')
+
+    vi.advanceTimersByTime(899)
+    expect(root.textContent).toContain('Question 1 of 2')
+    vi.advanceTimersByTime(1)
+    expect(root.textContent).toContain('Question 2 of 2')
+    expect(root.querySelector('#answer-input')).toBe(document.activeElement)
+    vi.advanceTimersByTime(900)
+    expect(root.textContent).toContain('Question 2 of 2')
+    app.destroy()
+  })
+
+  it('lets manual advance or the live toggle safely cancel automatic movement', () => {
+    const state = createPracticeState(3)
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store: createStore({ status: 'ok', state }), now: () => 2_000 })
+    app.start()
+
+    submitAnswer(root, state.session!.problems[0]!.answer)
+    vi.advanceTimersByTime(899)
+    root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    expect(root.textContent).toContain('Question 2 of 3')
+    vi.advanceTimersByTime(1)
+    expect(root.textContent).toContain('Question 2 of 3')
+
+    submitAnswer(root, state.session!.problems[1]!.answer)
+    root.querySelector<HTMLButtonElement>('[data-action="toggle-auto-advance"]')!.click()
+    expect(root.querySelector('[data-action="toggle-auto-advance"]')?.getAttribute('aria-pressed')).toBe('false')
+    vi.advanceTimersByTime(1_000)
+    expect(root.textContent).toContain('Question 2 of 3')
+    expect(root.textContent).toContain('Next question')
+    app.destroy()
+  })
+
+  it('cancels a pending automatic advance when hidden or destroyed', () => {
+    const state = createPracticeState(2)
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store: createStore({ status: 'ok', state }), now: () => 2_000 })
+    app.start()
+    submitAnswer(root, state.session!.problems[0]!.answer)
+    setVisibility('hidden')
+    document.dispatchEvent(new Event('visibilitychange'))
+    vi.advanceTimersByTime(1_000)
+    expect(root.textContent).toContain('Question 1 of 2')
+    app.destroy()
+    vi.advanceTimersByTime(1_000)
+    expect(root.textContent).toContain('Question 1 of 2')
   })
 
   it('announces a failed save without claiming progress is stored', () => {

@@ -2,6 +2,8 @@ export const OPERATIONS = ['add', 'subtract', 'multiply', 'divide'] as const
 
 export type Operation = (typeof OPERATIONS)[number]
 export type OperationMode = 'same' | 'mixed'
+export const CHALLENGE_LEVELS = ['random', 1, 2, 3, 4, 5] as const
+export type ChallengeLevel = (typeof CHALLENGE_LEVELS)[number]
 
 export interface TrainingConfig {
   minDigits: number
@@ -10,6 +12,7 @@ export interface TrainingConfig {
   operationMode: OperationMode
   operations: Operation[]
   problemCount: number
+  challenge: ChallengeLevel
 }
 
 export interface Problem {
@@ -40,6 +43,7 @@ export const DEFAULT_CONFIG: TrainingConfig = {
   operationMode: 'same',
   operations: ['add'],
   problemCount: 10,
+  challenge: 'random',
 }
 
 const MAX_GENERATION_ATTEMPTS = 320
@@ -95,6 +99,9 @@ export function validateConfig(config: TrainingConfig): string[] {
   }
   if (!Number.isInteger(config.problemCount) || config.problemCount < 1 || config.problemCount > 50) {
     errors.push('Questions per session must be between 1 and 50.')
+  }
+  if (!CHALLENGE_LEVELS.includes(config.challenge)) {
+    errors.push('Choose Random or a challenge level from 1 to 5.')
   }
 
   const uniqueOperations = new Set(config.operations)
@@ -166,9 +173,36 @@ export function generateProblems(config: TrainingConfig, seed: number): Problem[
   if (errors.length > 0) throw new Error(errors.join(' '))
 
   const random = createSeededRandom(seed)
-  return Array.from({ length: config.problemCount }, (_, index) =>
-    generateProblem(config, random, `${seed >>> 0}-${index + 1}`),
-  )
+  if (config.challenge === 'random') {
+    return Array.from({ length: config.problemCount }, (_, index) =>
+      generateProblem(config, random, `${seed >>> 0}-${index + 1}`),
+    )
+  }
+
+  const candidateCount = Math.max(25, config.problemCount * 3)
+  const candidates = Array.from({ length: candidateCount }, (_, index) => ({
+    problem: generateProblem(config, random, `candidate-${index + 1}`),
+    index,
+  }))
+    .map((candidate) => ({ ...candidate, score: challengeScore(candidate.problem, config) }))
+    .sort((left, right) => left.score - right.score || left.index - right.index)
+
+  const selected = selectChallengeCandidates(candidates, config.challenge, config.problemCount)
+  return selected.map(({ problem }, index) => ({
+    ...problem,
+    id: `${seed >>> 0}-${index + 1}`,
+    operands: [...problem.operands],
+    operators: [...problem.operators],
+  }))
+}
+
+export function challengeScore(problem: Problem, config: TrainingConfig): number {
+  const magnitude = average(problem.operands.map((operand) => normalizedOperandMagnitude(operand, config)))
+  const operation = average(problem.operators.map((item) => OPERATION_CHALLENGE_COST[item]))
+  const maximumAnswerDigits = Math.max(1, config.maxDigits * (config.operatorCount + 1))
+  const answerDigits = Math.min(1_000, Math.floor((problem.answer.replace(/^-/, '').length * 1_000) / maximumAnswerDigits))
+  const variety = Math.floor(((new Set(problem.operators).size - 1) * 1_000) / 3)
+  return 55 * magnitude + 30 * operation + 10 * answerDigits + 5 * variety
 }
 
 export function formatExpression(problem: Problem): string {
@@ -332,6 +366,65 @@ function canBuildDivisionChain(config: TrainingConfig): boolean {
   const bounds = operandBounds(config)
   const minimumProduct = BigInt(bounds.min) ** BigInt(config.operatorCount)
   return minimumProduct <= BigInt(bounds.max)
+}
+
+const OPERATION_CHALLENGE_COST: Record<Operation, number> = {
+  add: 100,
+  subtract: 350,
+  multiply: 700,
+  divide: 850,
+}
+
+const CHALLENGE_BANDS: Record<Exclude<ChallengeLevel, 'random'>, readonly [number, number]> = {
+  1: [0, 340],
+  2: [165, 505],
+  3: [330, 670],
+  4: [495, 835],
+  5: [660, 1_000],
+}
+
+function selectChallengeCandidates<T extends { score: number; index: number }>(
+  candidates: readonly T[],
+  level: Exclude<ChallengeLevel, 'random'>,
+  count: number,
+): T[] {
+  const [start, end] = CHALLENGE_BANDS[level]
+  const used = new Set<number>()
+  return Array.from({ length: count }, (_, index) => {
+    const target = count === 1 ? Math.round((start + end) / 2) : start + Math.round(((end - start) * index) / (count - 1))
+    const desired = clamp(Math.round((target * (candidates.length - 1)) / 1_000), 0, candidates.length - 1)
+    const selectedIndex = nearestUnusedIndex(desired, candidates.length, used)
+    used.add(selectedIndex)
+    return candidates[selectedIndex]!
+  })
+}
+
+function nearestUnusedIndex(desired: number, length: number, used: ReadonlySet<number>): number {
+  for (let distance = 0; distance < length; distance += 1) {
+    const lower = desired - distance
+    if (lower >= 0 && !used.has(lower)) return lower
+    const upper = desired + distance
+    if (upper < length && !used.has(upper)) return upper
+  }
+  throw new Error('Unable to select a challenge candidate.')
+}
+
+function normalizedOperandMagnitude(operand: string, config: TrainingConfig): number {
+  const value = Number(operand)
+  const digits = operand.replace(/^-/, '').length
+  const lower = 10 ** (digits - 1)
+  const upper = 10 ** digits - 1
+  const withinBand = Math.floor(((value - lower) * 1_000) / Math.max(1, upper - lower))
+  const bands = config.maxDigits - config.minDigits + 1
+  return clamp(Math.floor((((digits - config.minDigits) * 1_000) + withinBand) / bands), 0, 1_000)
+}
+
+function average(values: readonly number[]): number {
+  return values.length === 0 ? 0 : Math.floor(values.reduce((total, value) => total + value, 0) / values.length)
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value))
 }
 
 function createProblem(

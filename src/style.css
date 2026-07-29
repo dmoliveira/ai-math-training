@@ -872,6 +872,52 @@
     opacity: 0.54;
   }
 
+  .challenge-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 17px;
+  }
+
+  .challenge-card {
+    position: relative;
+    min-width: 0;
+  }
+
+  .challenge-card > span {
+    display: grid;
+    min-height: 94px;
+    align-content: center;
+    gap: 5px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 13px;
+    background: var(--surface);
+    transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+  }
+
+  .challenge-card b {
+    color: var(--ink);
+    font-size: 0.84rem;
+  }
+
+  .challenge-card small {
+    color: var(--muted);
+    font-size: 0.72rem;
+    line-height: 1.4;
+  }
+
+  .challenge-card input:checked + span {
+    border-color: var(--primary);
+    background: var(--primary-pale);
+    box-shadow: inset 0 0 0 1px var(--primary);
+  }
+
+  .challenge-card input:focus-visible + span {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+  }
+
   .question-count-row {
     display: grid;
     grid-template-columns: 86px 1fr;
@@ -1183,14 +1229,38 @@
 
   .session-toolbar {
     display: grid;
-    grid-template-columns: 1fr auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     align-items: center;
-    gap: 40px;
+    gap: 18px;
     padding: 18px 22px;
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     background: rgb(255 255 255 / 84%);
     box-shadow: var(--shadow-sm);
+  }
+
+  .auto-next-toggle {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 720;
+  }
+
+  .auto-next-toggle[aria-pressed="true"] {
+    border-color: var(--primary);
+    background: var(--primary-pale);
+    color: var(--primary);
+  }
+
+  .auto-next-toggle strong {
+    color: currentcolor;
   }
 
   .review-mode-badge {
@@ -2093,6 +2163,10 @@
       padding: 16px;
     }
 
+    .auto-next-toggle {
+      width: fit-content;
+    }
+
     .progress-copy {
       grid-template-columns: 1fr;
       gap: 9px;
@@ -2194,6 +2268,15 @@
 
     .card-heading {
       display: grid;
+    }
+
+    .challenge-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .challenge-card > span {
+      min-height: 88px;
+      padding: 12px;
     }
 
     .privacy-pill {

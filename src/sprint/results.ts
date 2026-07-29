@@ -1,4 +1,4 @@
-import { OPERATION_DETAILS, type Operation, type TrainingConfig } from '../math/engine'
+import { OPERATION_DETAILS, validateConfig, type Operation, type TrainingConfig } from '../math/engine'
 import {
   SKIP_PENALTY_MS,
   getPenaltyMs,
@@ -227,6 +227,9 @@ export function isSprintResult(value: unknown): value is SprintResult {
     !Array.isArray(result.problems)
   ) return false
   const totals = result.totals
+  const normalizedConfig = result.config
+    ? { ...result.config, operations: [...result.config.operations], challenge: result.config.challenge ?? 'random' }
+    : null
   const numericTotals = [
     totals.problems,
     totals.correct,
@@ -242,11 +245,23 @@ export function isSprintResult(value: unknown): value is SprintResult {
   return (
     result.id.length > 0 &&
     result.sessionId.length > 0 &&
+    normalizedConfig !== null &&
+    validateConfig(normalizedConfig).length === 0 &&
     result.configKey === configKey(result.config) &&
     numericTotals.every((item) => Number.isSafeInteger(item) && item >= 0) &&
     totals.problems === result.problems.length &&
     totals.scoredElapsedMs === safeAdd(totals.activeElapsedMs, totals.penaltyMs)
   )
+}
+
+export function normalizeSprintResult(value: unknown): SprintResult | null {
+  if (!isSprintResult(value)) return null
+  return {
+    ...value,
+    config: { ...value.config, operations: [...value.config.operations], challenge: value.config.challenge ?? 'random' },
+    totals: { ...value.totals },
+    problems: value.problems.map((problem) => ({ ...problem, operands: [...problem.operands], operators: [...problem.operators] })),
+  }
 }
 
 function safeAdd(left: number, right: number): number {

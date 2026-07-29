@@ -23,10 +23,10 @@ describe('guided practice', () => {
   it('derives deterministic valid stretch steps without mutating input', () => {
     const source = { ...DEFAULT_CONFIG, operations: [...DEFAULT_CONFIG.operations], minDigits: 1, maxDigits: 1 }
     const before = structuredClone(source)
-    expect(createStretchRecommendation(source)).toMatchObject({ config: { maxDigits: 2 }, change: expect.stringContaining('1 to 2 digits') })
+    expect(createStretchRecommendation(source)).toMatchObject({ config: { challenge: 3 }, change: expect.stringContaining('Random to Level 3') })
     expect(source).toEqual(before)
 
-    const maxDigits = { ...source, minDigits: 5, maxDigits: 5, operatorCount: 1 }
+    const maxDigits = { ...source, minDigits: 5, maxDigits: 5, operatorCount: 1, challenge: 5 as const }
     expect(createStretchRecommendation(maxDigits)).toMatchObject({ config: { operatorCount: 2 } })
     expect(createStretchRecommendation({ ...maxDigits, operatorCount: 4 })).toBeNull()
   })
@@ -56,9 +56,9 @@ describe('guided practice', () => {
     let clean = createTrainingSession({ ...DEFAULT_CONFIG, problemCount: 1 }, 4, 0)
     clean = setCurrentDraft(clean, clean.problems[0]!.answer)
     clean = advanceSession(checkCurrentAnswer(clean, 100), 200)
-    expect(deriveNextMission(clean)).toMatchObject({ kind: 'stretch', config: { maxDigits: 3 } })
+    expect(deriveNextMission(clean)).toMatchObject({ kind: 'stretch', config: { challenge: 3 } })
 
-    const ceiling = { ...clean, config: { ...clean.config, minDigits: 5, maxDigits: 5, operatorCount: 4 } }
+    const ceiling = { ...clean, config: { ...clean.config, minDigits: 5, maxDigits: 5, operatorCount: 4, challenge: 5 as const } }
     expect(deriveNextMission(ceiling)).toMatchObject({ kind: 'repeat' })
     expect(deriveNextMission({ ...clean, completedAt: null })).toBeNull()
   })

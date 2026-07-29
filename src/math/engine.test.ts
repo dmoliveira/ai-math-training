@@ -4,6 +4,7 @@ import {
   DEFAULT_CONFIG,
   OPERATIONS,
   createSeededRandom,
+  challengeScore,
   evaluateExpression,
   formatExpression,
   generateProblems,
@@ -36,6 +37,60 @@ describe('arithmetic engine', () => {
     expect(generateProblems(config, 42)).not.toEqual(generateProblems(config, 43))
   })
 
+  it('preserves the original seeded Random output byte for byte', () => {
+    expect(generateProblems({ ...DEFAULT_CONFIG, problemCount: 3 }, 42)).toEqual([
+      { id: '42-1', operands: ['19', '88'], operators: ['add'], answer: '107' },
+      { id: '42-2', operands: ['60', '32'], operators: ['add'], answer: '92' },
+      { id: '42-3', operands: ['74', '5'], operators: ['add'], answer: '79' },
+    ])
+  })
+
+  it('creates deterministic, progressively tougher relative challenge bands', () => {
+    const base: TrainingConfig = {
+      ...DEFAULT_CONFIG,
+      maxDigits: 4,
+      operatorCount: 3,
+      operationMode: 'mixed',
+      operations: [...OPERATIONS],
+      problemCount: 20,
+    }
+    const averages = [1, 2, 3, 4, 5].map((challenge) => {
+      const config = { ...base, challenge: challenge as 1 | 2 | 3 | 4 | 5 }
+      const first = generateProblems(config, 9876)
+      expect(first).toEqual(generateProblems(config, 9876))
+      expect(first.map((problem) => problem.id)).toEqual(Array.from({ length: 20 }, (_, index) => `9876-${index + 1}`))
+      const scores = first.map((problem) => challengeScore(problem, config))
+      expect(scores).toEqual(scores.slice().sort((left, right) => left - right))
+      return scores.reduce((sum, score) => sum + score, 0) / scores.length
+    })
+    expect(averages).toEqual(averages.slice().sort((left, right) => left - right))
+    expect(new Set(averages).size).toBe(5)
+  })
+
+  it('keeps all challenge levels valid across representative operation families', () => {
+    const configs: TrainingConfig[] = [
+      { ...DEFAULT_CONFIG, operations: ['subtract'], maxDigits: 5, operatorCount: 4, problemCount: 5 },
+      { ...DEFAULT_CONFIG, operations: ['multiply'], maxDigits: 3, operatorCount: 3, problemCount: 5 },
+      { ...DEFAULT_CONFIG, operations: ['divide'], maxDigits: 5, operatorCount: 4, problemCount: 5 },
+      { ...DEFAULT_CONFIG, operations: [...OPERATIONS], operationMode: 'mixed', operatorCount: 4, maxDigits: 5, problemCount: 5 },
+    ]
+    for (const base of configs) {
+      for (const challenge of [1, 2, 3, 4, 5] as const) {
+        const config = { ...base, challenge }
+        for (const problem of generateProblems(config, challenge * 100)) {
+          expect(String(evaluateExpression(problem.operands.map(BigInt), problem.operators))).toBe(problem.answer)
+        }
+      }
+    }
+  })
+
+  it('bounds maximum challenge generation cost', () => {
+    const started = performance.now()
+    const problems = generateProblems({ ...DEFAULT_CONFIG, maxDigits: 5, operatorCount: 4, operationMode: 'mixed', operations: [...OPERATIONS], problemCount: 50, challenge: 5 }, 2468)
+    expect(problems).toHaveLength(50)
+    expect(performance.now() - started).toBeLessThan(750)
+  })
+
   it('builds exact repeated division without rejection loops', () => {
     const config: TrainingConfig = {
       minDigits: 1,
@@ -44,6 +99,7 @@ describe('arithmetic engine', () => {
       operationMode: 'same',
       operations: ['divide'],
       problemCount: 12,
+      challenge: 'random',
     }
 
     for (const problem of generateProblems(config, 7)) {
@@ -61,6 +117,7 @@ describe('arithmetic engine', () => {
       operationMode: 'same',
       operations: ['divide'],
       problemCount: 3,
+      challenge: 'random',
     }
 
     for (const problem of generateProblems(config, 99)) {
@@ -79,6 +136,7 @@ describe('arithmetic engine', () => {
       operationMode: 'same',
       operations: ['divide'],
       problemCount: 5,
+      challenge: 'random',
     })
 
     expect(errors).toContain(
@@ -105,6 +163,7 @@ describe('arithmetic engine', () => {
                   operationMode,
                   operations,
                   problemCount: 1,
+                  challenge: 'random',
                 }
                 if (validateConfig(config).length > 0) continue
 

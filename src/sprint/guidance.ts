@@ -29,21 +29,21 @@ export const PRACTICE_PRESETS: readonly PracticePreset[] = [
     eyebrow: 'Gentle start',
     title: 'Quick win',
     description: '5 one-digit addition and subtraction questions.',
-    config: { minDigits: 1, maxDigits: 1, operatorCount: 1, operationMode: 'same', operations: ['add', 'subtract'], problemCount: 5 },
+    config: { minDigits: 1, maxDigits: 1, operatorCount: 1, operationMode: 'same', operations: ['add', 'subtract'], problemCount: 5, challenge: 1 },
   },
   {
     id: 'build-fluency',
     eyebrow: 'Skill builder',
     title: 'Build fluency',
     description: '10 one-digit multiplication and exact-division questions.',
-    config: { minDigits: 1, maxDigits: 1, operatorCount: 1, operationMode: 'same', operations: ['multiply', 'divide'], problemCount: 10 },
+    config: { minDigits: 1, maxDigits: 1, operatorCount: 1, operationMode: 'same', operations: ['multiply', 'divide'], problemCount: 10, challenge: 3 },
   },
   {
     id: 'stretch-thinking',
     eyebrow: 'Fresh challenge',
     title: 'Stretch thinking',
     description: '10 two-digit mixed addition and subtraction questions.',
-    config: { minDigits: 2, maxDigits: 2, operatorCount: 2, operationMode: 'mixed', operations: ['add', 'subtract'], problemCount: 10 },
+    config: { minDigits: 2, maxDigits: 2, operatorCount: 2, operationMode: 'mixed', operations: ['add', 'subtract'], problemCount: 10, challenge: 4 },
   },
 ] as const
 
@@ -100,6 +100,17 @@ export function deriveNextMission(session: TrainingSession): NextMission | null 
 
 export function createStretchRecommendation(config: TrainingConfig): { config: TrainingConfig; change: string } | null {
   const candidates: Array<{ config: TrainingConfig; change: string }> = []
+  if (config.challenge === 'random') {
+    candidates.push({
+      config: { ...cloneConfig(config), challenge: 3 },
+      change: 'Switch from Random to Level 3 for a steady easy-to-hard ramp; everything else stays the same.',
+    })
+  } else if (config.challenge < 5) {
+    candidates.push({
+      config: { ...cloneConfig(config), challenge: (config.challenge + 1) as 2 | 3 | 4 | 5 },
+      change: `Move from challenge Level ${config.challenge} to Level ${config.challenge + 1}; everything else stays the same.`,
+    })
+  }
   if (config.maxDigits < 5) {
     candidates.push({
       config: { ...cloneConfig(config), maxDigits: config.maxDigits + 1 },
