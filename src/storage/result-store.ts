@@ -13,9 +13,12 @@ const BY_SESSION = 'bySession'
 const BY_CONFIG_COMPLETED = 'byConfigCompleted'
 const BY_CONFIG_RANK = 'byConfigRank'
 const DEFAULT_DATABASE_NAME = 'mental-math-sprint-history'
-export const DEFAULT_MAX_RESULTS_PER_CONFIG = 500_000
+export const DEFAULT_MAX_RESULTS_PER_CONFIG = 500
 const DEFAULT_PAGE_SIZE = 25
 const MAX_PAGE_SIZE = 100
+const MAX_RECENT_RESULTS = 500
+export const MAX_CURSOR_SCAN_COUNT = 600
+const MAX_PRUNE_PER_WRITE = 500
 
 type StoredResult = {
   id: string
@@ -79,7 +82,7 @@ export class IndexedDbResultStore implements ResultStore {
           const countRequest = store.index(BY_CONFIG_COMPLETED).count(range)
           countRequest.onerror = () => transaction.abort()
           countRequest.onsuccess = () => {
-            const pruneCount = Math.max(0, countRequest.result - this.maxResultsPerConfig + 1)
+            const pruneCount = Math.min(MAX_PRUNE_PER_WRITE, Math.max(0, countRequest.result - this.maxResultsPerConfig + 1))
             if (pruneCount === 0) {
               addStoredResult(store, result, () => { status = 'saved' }, transaction)
               return
@@ -130,7 +133,7 @@ export class IndexedDbResultStore implements ResultStore {
       const lower: IDBValidKey = [configKey, 0, '']
       const upper: IDBValidKey = decoded?.key ?? [configKey, Number.MAX_SAFE_INTEGER, '\uffff']
       const range = this.requireKeyRange().bound(lower, upper, false, Boolean(decoded))
-      return await this.collect(database, BY_CONFIG_COMPLETED, range, 'prev', pageSize, true)
+      return await this.collect(database, BY_CONFIG_COMPLETED, range, 'prev', pageSize, true, false)
     } catch (error) {
       return errorPage(error)
     }
@@ -142,7 +145,7 @@ export class IndexedDbResultStore implements ResultStore {
         [configKey, 1, 0, 0, 0, ''],
         [configKey, 1, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, '\uffff'],
       )
-      return await this.collect(await this.open(), BY_CONFIG_RANK, range, 'next', normalizeLimit(limit), false)
+      return await this.collect(await this.open(), BY_CONFIG_RANK, range, 'next', normalizeLimit(limit), false, false)
     } catch (error) {
       return errorPage(error)
     }
@@ -155,7 +158,7 @@ export class IndexedDbResultStore implements ResultStore {
         [configKey, since, ''],
         [configKey, Number.MAX_SAFE_INTEGER, '\uffff'],
       )
-      return await this.collect(await this.open(), BY_CONFIG_COMPLETED, range, 'next', Number.MAX_SAFE_INTEGER, false)
+      return await this.collect(await this.open(), BY_CONFIG_COMPLETED, range, 'next', MAX_RECENT_RESULTS, false, true)
     } catch (error) {
       return errorPage(error)
     }
@@ -191,12 +194,14 @@ export class IndexedDbResultStore implements ResultStore {
     direction: IDBCursorDirection,
     limit: number,
     paginated: boolean,
+    reportLimitAsTruncated: boolean,
   ): Promise<ResultPage> {
     return await new Promise((resolve) => {
       const transaction = database.transaction(RESULTS_STORE)
       const request = transaction.objectStore(RESULTS_STORE).index(indexName).openCursor(range, direction)
       const results: SprintResult[] = []
       let corruptRecords = 0
+      let scannedRecords = 0
       let lastKey: IDBValidKey | null = null
       let hasMore = false
       request.onerror = () => resolve(failedPage())
@@ -208,7 +213,13 @@ export class IndexedDbResultStore implements ResultStore {
             results,
             nextCursor: paginated && hasMore && lastKey ? encodeCursor(lastKey) : null,
             corruptRecords,
+            truncated: false,
           })
+          return
+        }
+        scannedRecords += 1
+        if (scannedRecords > MAX_CURSOR_SCAN_COUNT) {
+          resolve({ status: 'ok', results, nextCursor: null, corruptRecords, truncated: true })
           return
         }
         const result = readStoredResult(cursor.value)
@@ -224,6 +235,7 @@ export class IndexedDbResultStore implements ResultStore {
             results,
             nextCursor: paginated && lastKey ? encodeCursor(lastKey) : null,
             corruptRecords,
+            truncated: reportLimitAsTruncated,
           })
           return
         }
@@ -367,12 +379,12 @@ function decodeCursor(value: string, configKey: string): { key: IDBValidKey[] } 
 }
 
 function failedPage(): ResultPage {
-  return { status: 'failed', results: [], nextCursor: null, corruptRecords: 0 }
+  return { status: 'failed', results: [], nextCursor: null, corruptRecords: 0, truncated: false }
 }
 
 function errorPage(error: unknown): ResultPage {
   const status = mapOpenError(error)
-  return { status: status === 'blocked' ? 'blocked' : status === 'unavailable' ? 'unavailable' : 'failed', results: [], nextCursor: null, corruptRecords: 0 }
+  return { status: status === 'blocked' ? 'blocked' : status === 'unavailable' ? 'unavailable' : 'failed', results: [], nextCursor: null, corruptRecords: 0, truncated: false }
 }
 
 function mapOpenError(error: unknown): ResultStoreWriteResult['status'] {

@@ -336,8 +336,9 @@ function hasValidProblemSequenceForConfig(config: Omit<TrainingConfig, 'challeng
       problem.operators.every((operation) => config.operations.includes(operation))
     const distinctOperators = new Set(problem.operators).size
     const modeMatchesConfig = config.operationMode === 'same' ? distinctOperators === 1 : distinctOperators >= 2
+    if (!operandsMatchConfig || !operatorsMatchConfig || !modeMatchesConfig) return false
     const answer = evaluateExpression(problem.operands.map(BigInt), problem.operators)
-    return operandsMatchConfig && operatorsMatchConfig && modeMatchesConfig && answer !== null && String(answer) === problem.answer
+    return answer !== null && String(answer) === problem.answer
   })
 }
 
@@ -400,7 +401,7 @@ function hasConsistentLegacyProgress(session: LegacyTrainingSession): boolean {
 }
 
 function isProblem(value: unknown): value is Problem {
-  return isRecord(value) && typeof value.id === 'string' && Array.isArray(value.operands) && value.operands.length >= 2 && value.operands.every((operand) => typeof operand === 'string' && /^\d+$/.test(operand)) && Array.isArray(value.operators) && value.operators.length === value.operands.length - 1 && value.operators.every(isOperation) && typeof value.answer === 'string' && /^\d+$/.test(value.answer)
+  return isRecord(value) && typeof value.id === 'string' && value.id.length > 0 && value.id.length <= 200 && Array.isArray(value.operands) && value.operands.length >= 2 && value.operands.length <= 5 && value.operands.every((operand) => typeof operand === 'string' && /^[1-9]\d{0,4}$/.test(operand)) && Array.isArray(value.operators) && value.operators.length === value.operands.length - 1 && value.operators.every(isOperation) && typeof value.answer === 'string' && /^\d{1,30}$/.test(value.answer)
 }
 
 function isProblemProgress(value: unknown): value is ProblemProgress {

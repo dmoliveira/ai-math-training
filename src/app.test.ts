@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MathTrainingApp } from './app'
-import { DEFAULT_CONFIG } from './math/engine'
+import { DEFAULT_CONFIG, speakExpression } from './math/engine'
 import { DEFAULT_PREFERENCES, type SharePayload } from './sprint/contracts'
 import { createSprintResult, type ResultPage, type ResultStore, type ResultStoreWriteResult } from './sprint/results'
 import { advanceSession, checkCurrentAnswer, createReviewSession, createTrainingSession, pauseSession, setCurrentDraft, skipCurrentProblem } from './state/session'
@@ -35,6 +35,7 @@ const emptyResultPage = (): ResultPage => ({
   results: [],
   nextCursor: null,
   corruptRecords: 0,
+  truncated: false,
 })
 
 const createResultStore = (): ResultStore => ({
@@ -313,6 +314,63 @@ describe('MathTrainingApp lifecycle', () => {
     expect(root.textContent).toContain('Question 1 of 2')
   })
 
+  it('hides live timers without changing recorded completion time', () => {
+    let now = 1_000
+    const state = createPracticeState()
+    const store = createStore({ status: 'ok', state })
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store, now: () => now, resultStore: createResultStore() })
+    app.start()
+    root.querySelector<HTMLButtonElement>('[data-action="toggle-timers"]')!.click()
+    expect(root.querySelector('#elapsed-time')?.textContent).toBe('Hidden')
+    expect(root.querySelector('#question-time')?.textContent).toBe('Hidden')
+    expect(root.querySelector('[data-action="toggle-timers"]')).toBe(document.activeElement)
+    expect((store.save.mock.calls.at(-1)![0] as PersistedAppState).preferences.hideTimers).toBe(true)
+
+    now = 4_000
+    vi.advanceTimersByTime(250)
+    expect(root.querySelector('#elapsed-time')?.textContent).toBe('Hidden')
+    root.querySelector<HTMLButtonElement>('[data-action="skip"]')!.click()
+    root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
+    expect(root.textContent).toContain('00:03 active')
+    expect(root.textContent).toContain('00:20 penalties')
+    app.destroy()
+  })
+
+  it('starts a private exact review from sanitized history only when no session is active', async () => {
+    const config = { ...DEFAULT_CONFIG, problemCount: 1 }
+    let source = createTrainingSession(config, 55, 0)
+    source = advanceSession(skipCurrentProblem(source, 100), 200)
+    const difficultResult = createSprintResult(source)!
+    const page = { ...emptyResultPage(), results: [difficultResult] }
+    const resultStore = createResultStore()
+    resultStore.listCompleted = vi.fn(async () => page)
+    resultStore.listRanked = vi.fn(async () => page)
+    resultStore.listCompletedSince = vi.fn(async () => page)
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store: createStore({ status: 'empty', state: null }), resultStore, now: () => 1_000, createSeed: () => 77 })
+    app.start()
+    const problemCount = root.querySelector<HTMLInputElement>('#problem-count')!
+    problemCount.value = '1'
+    problemCount.dispatchEvent(new Event('input', { bubbles: true }))
+    await vi.waitFor(() => expect(root.querySelector('[data-action="start-history-review"]')).not.toBeNull())
+    root.querySelector<HTMLButtonElement>('[data-action="start-history-review"]')!.click()
+    expect(root.querySelector('.review-mode-badge')?.textContent).toContain('Unscored')
+    expect(root.querySelector('.expression')?.getAttribute('aria-label')).toBe(`${speakExpression(source.problems[0]!)}`)
+    expect(resultStore.saveCompleted).not.toHaveBeenCalled()
+    app.destroy()
+
+    document.body.innerHTML = '<div id="app"></div>'
+    const activeState = createPracticeState()
+    activeState.view = 'setup'
+    const activeRoot = document.querySelector<HTMLElement>('#app')!
+    const activeApp = new MathTrainingApp(activeRoot, { store: createStore({ status: 'ok', state: activeState }), resultStore, now: () => 1_000 })
+    activeApp.start()
+    await Promise.resolve()
+    expect(activeRoot.querySelector('[data-action="start-history-review"]')).toBeNull()
+    activeApp.destroy()
+  })
+
   it('announces a failed save without claiming progress is stored', () => {
     const store = createStore({ status: 'empty', state: null })
     store.save.mockReturnValue(false)
@@ -456,7 +514,7 @@ describe('MathTrainingApp lifecycle', () => {
     expect(root.textContent).not.toContain('Perfect run!')
     expect(root.textContent).toContain('Scored time')
     expect(root.textContent).toContain('00:23')
-    expect(root.textContent).toContain('Skipped (+20s)')
+    expect(root.textContent).toContain('Skipped · +20s')
     expect(audio.play).toHaveBeenCalledWith('complete')
     await vi.waitFor(() => expect(resultStore.saveCompleted).toHaveBeenCalledOnce())
     await vi.waitFor(() => expect(root.textContent).toContain('Personal top five'))
@@ -486,10 +544,12 @@ describe('MathTrainingApp lifecycle', () => {
     root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
 
     await vi.waitFor(() => expect(resultStore.saveCompleted).toHaveBeenCalledOnce())
-    expect(root.textContent).toContain('Start exact review')
-    expect(root.textContent).toContain('Training insight')
+    expect(root.textContent).toContain('Review this question')
+    expect(root.textContent).toContain('Your debrief')
+    expect(root.textContent).toContain('Sprint again')
+    expect(root.textContent).toContain('Change settings')
     const rankingCalls = vi.mocked(resultStore.listRanked).mock.calls.length
-    const originalExpression = root.querySelector('.review-expression')?.getAttribute('aria-label')?.split(' equals ')[0]
+    const originalExpression = root.querySelector('.debrief-focus strong')?.getAttribute('aria-label')?.split(' equals ')[0]
     root.querySelector<HTMLButtonElement>('[data-action="start-review"]')!.click()
     expect(root.querySelector('.review-mode-badge')?.textContent).toContain('Unscored')
     expect(root.querySelector('.expression')?.getAttribute('aria-label')).toBe(originalExpression)

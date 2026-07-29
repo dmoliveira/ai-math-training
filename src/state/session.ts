@@ -1,5 +1,6 @@
 import {
   generateProblems,
+  evaluateExpression,
   validateConfig,
   type Problem,
   type TrainingConfig,
@@ -93,12 +94,43 @@ export function createReviewSession(source: TrainingSession, now: number): Train
     source.progress[index] && isDifficultProgress(source.progress[index]!) ? [cloneProblem(problem)] : [],
   )
   if (problems.length === 0) return null
-  return createExactReviewSession(source, problems, now)
+  return createProblemReviewSession(source.config, source.seed, problems, now)
 }
 
 export function restartReviewSession(source: TrainingSession, now: number): TrainingSession {
   if (source.mode !== 'review') throw new Error('Only review sessions can restart exact questions.')
-  return createExactReviewSession(source, source.problems.map(cloneProblem), now)
+  const review = createProblemReviewSession(source.config, source.seed, source.problems, now)
+  if (!review) throw new Error('Review questions are invalid.')
+  return review
+}
+
+export function createProblemReviewSession(
+  config: TrainingConfig,
+  seed: number,
+  sourceProblems: readonly Problem[],
+  now: number,
+): TrainingSession | null {
+  if (sourceProblems.length < 1 || sourceProblems.length > 50 || !Number.isSafeInteger(seed) || seed < 0 || !Number.isSafeInteger(now) || now < 0) return null
+  const reviewConfig = { ...cloneConfig(config), problemCount: sourceProblems.length }
+  if (validateConfig(reviewConfig).length > 0 || !sourceProblems.every((problem) => reviewProblemMatchesConfig(problem, reviewConfig))) return null
+  const problems = sourceProblems.map((problem, index) => ({ ...cloneProblem(problem), id: `review-${now}-${seed}-${index + 1}` }))
+  return {
+    schemaVersion: SESSION_SCHEMA_VERSION,
+    mode: 'review',
+    id: `review-${now}-${seed}`,
+    config: reviewConfig,
+    seed,
+    problems,
+    progress: problems.map(() => ({ draft: '', attempts: 0, status: 'pending', feedback: 'none', activeElapsedMs: 0 })),
+    currentIndex: 0,
+    mistakes: 0,
+    elapsedMs: 0,
+    timerStartedAt: now,
+    currentProblemStartedAt: now,
+    timingQuality: 'exact',
+    createdAt: now,
+    completedAt: null,
+  }
 }
 
 export function setCurrentDraft(session: TrainingSession, value: string): TrainingSession {
@@ -343,28 +375,12 @@ function cloneProblem(problem: Problem): Problem {
   return { ...problem, operands: [...problem.operands], operators: [...problem.operators] }
 }
 
-function createExactReviewSession(source: TrainingSession, problems: Problem[], now: number): TrainingSession {
-  return {
-    schemaVersion: SESSION_SCHEMA_VERSION,
-    mode: 'review',
-    id: `review-${now}-${source.seed}`,
-    config: { ...cloneConfig(source.config), problemCount: problems.length },
-    seed: source.seed,
-    problems,
-    progress: problems.map(() => ({
-      draft: '',
-      attempts: 0,
-      status: 'pending',
-      feedback: 'none',
-      activeElapsedMs: 0,
-    })),
-    currentIndex: 0,
-    mistakes: 0,
-    elapsedMs: 0,
-    timerStartedAt: now,
-    currentProblemStartedAt: now,
-    timingQuality: 'exact',
-    createdAt: now,
-    completedAt: null,
-  }
+function reviewProblemMatchesConfig(problem: Problem, config: TrainingConfig): boolean {
+  if (problem.operands.length !== config.operatorCount + 1 || problem.operators.length !== config.operatorCount) return false
+  if (!problem.operands.every((operand) => /^[1-9]\d{0,4}$/.test(operand) && operand.length >= config.minDigits && operand.length <= config.maxDigits)) return false
+  if (!problem.operators.every((operation) => config.operations.includes(operation))) return false
+  const distinct = new Set(problem.operators).size
+  if (config.operationMode === 'same' ? distinct !== 1 : distinct < 2) return false
+  const answer = evaluateExpression(problem.operands.map(BigInt), problem.operators)
+  return answer !== null && String(answer) === problem.answer
 }

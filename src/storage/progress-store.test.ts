@@ -45,6 +45,7 @@ function createV2State(): Record<string, unknown> {
   delete settings.challenge
   const preferences = state.preferences as Record<string, unknown>
   delete preferences.autoAdvance
+  delete preferences.hideTimers
   const session = state.session as Record<string, unknown>
   delete (session.config as Record<string, unknown>).challenge
   return state
@@ -95,6 +96,17 @@ describe('progress store', () => {
     state.session.problems[0] = { ...state.session.problems[0]!, answer: '999999' }
     storage.values.set(STORAGE_KEY, JSON.stringify(state))
     expect(store.load()).toEqual({ status: 'invalid', state: null })
+  })
+
+  it('rejects oversized persisted arithmetic strings before BigInt evaluation', () => {
+    const storage = new MemoryStorage()
+    const state = createState()
+    if (!state.session) throw new Error('Expected session')
+    state.session.problems[0]!.operands[0] = '9'.repeat(100_000)
+    state.session.problems[0]!.answer = '9'.repeat(100_000)
+    storage.values.set(STORAGE_KEY, JSON.stringify(state))
+
+    expect(new ProgressStore(storage).load()).toEqual({ status: 'invalid', state: null })
   })
 
   it('rejects internally inconsistent progress and completion state', () => {
