@@ -71,7 +71,7 @@ test('completes an addition session entirely from the keyboard', async ({ page }
 })
 
 test('moves to the next question automatically after correct feedback', async ({ page }) => {
-  await setQuestionCount(page, 1)
+  await page.locator('#problem-count').fill('1')
   await page.getByRole('button', { name: /Start sprint/ }).click()
   await expect(page.locator('.auto-next-toggle')).toHaveAttribute('aria-pressed', 'true')
   const expression = await page.locator('.expression__pieces').innerText()

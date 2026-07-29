@@ -208,6 +208,7 @@ describe('MathTrainingApp lifecycle', () => {
 
     await vi.waitFor(() => expect(resultStore.listCompleted).toHaveBeenCalledTimes(2))
     expect(root.textContent).toContain('Custom setup')
+    expect(root.querySelector('#setup-example-host')?.textContent).toContain('7 questions')
     expect(root.querySelector('[data-action="start-preset"][aria-pressed="true"]')).toBeNull()
     app.destroy()
   })
