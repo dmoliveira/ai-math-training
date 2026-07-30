@@ -2691,6 +2691,36 @@
 }
 
 @layer views {
+  .progress-snapshot {
+    margin-top: 20px;
+    padding: 18px;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background: var(--surface-muted);
+  }
+
+  .progress-snapshot h3 { margin-top: 4px; font-size: 1.3rem; }
+  .progress-snapshot dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+  .progress-snapshot dl > div { display: grid; gap: 6px; min-width: 0; padding: 14px; border-radius: 13px; background: var(--surface); }
+  .progress-snapshot dt { color: var(--muted); font-size: .73rem; font-weight: 760; line-height: 1.3; }
+  .progress-snapshot dd { overflow-wrap: anywhere; color: var(--ink); font-size: clamp(1.15rem, 3vw, 1.55rem); font-weight: 850; }
+  .history-empty { display: grid; gap: 12px; }
+  .history-empty p:not(.step-label) { max-width: 560px; color: var(--muted); }
+  .history-empty .button { width: fit-content; margin-top: 4px; }
+}
+
+@media (max-width: 600px) {
+  .progress-snapshot dl { grid-template-columns: 1fr; }
+  .progress-snapshot dl > div { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+  .progress-snapshot dd { text-align: right; }
+}
+
+@media (forced-colors: active) {
+  .progress-snapshot,
+  .progress-snapshot dl > div { border: 1px solid CanvasText; }
+}
+
+@layer views {
   .guided-challenges-heading {
     display: grid;
     gap: 4px;

@@ -103,10 +103,10 @@ describe('MathTrainingApp lifecycle', () => {
     app.destroy()
   })
 
-  it('navigates between Practice and Progress without persisting UI-only state', () => {
+  it('navigates between Practice and an actionable empty Progress state without persisting UI-only state', async () => {
     const store = createStore({ status: 'empty', state: null })
     const root = document.querySelector<HTMLElement>('#app')!
-    const app = new MathTrainingApp(root, { store, now: () => 1_000 })
+    const app = new MathTrainingApp(root, { store, resultStore: createResultStore(), now: () => 1_000 })
     app.start()
 
     expect(root.querySelector('[data-action="show-practice"]')?.getAttribute('aria-current')).toBe('page')
@@ -114,6 +114,10 @@ describe('MathTrainingApp lifecycle', () => {
     expect(root.dataset.section).toBe('progress')
     expect(document.activeElement?.id).toBe('progress-heading')
     expect(root.querySelector('[data-action="show-progress"]')?.getAttribute('aria-current')).toBe('page')
+    await vi.waitFor(() => expect(root.textContent).toContain('No results for this setup yet'))
+    expect(root.querySelector('[data-action="start-current-setup"]')).not.toBeNull()
+    expect(root.querySelector('[data-action="show-reset"]')).toBeNull()
+    expect(root.textContent).not.toContain('Full history')
     const saved = store.save.mock.calls.at(-1)![0] as PersistedAppState
     expect(Object.keys(saved).sort()).toEqual(['preferences', 'schemaVersion', 'session', 'settings', 'view'])
 
@@ -201,8 +205,47 @@ describe('MathTrainingApp lifecycle', () => {
     await vi.waitFor(() => expect(root.textContent).toContain('Continue this exact setup'))
     expect(root.textContent).toContain('100% first-try accuracy')
     expect(root.textContent).toContain('Personal best')
+    root.querySelector<HTMLButtonElement>('[data-action="show-progress"]')!.click()
+    expect(root.textContent).toContain('First result')
+    expect(root.textContent).toContain('Your baseline is ready')
+    expect(root.textContent).toContain('<1 sec')
+    expect(root.querySelectorAll('.progress-snapshot dt')).toHaveLength(3)
+    expect(root.querySelector('time')?.getAttribute('datetime')).toBe(new Date(result.completedAt).toISOString())
+    expect(root.querySelector('.history-scope')).toBeNull()
+    root.querySelector<HTMLButtonElement>('[data-action="show-practice"]')!.click()
     root.querySelector<HTMLButtonElement>('[data-action="start-current-setup"]')!.click()
     expect(root.querySelector('#answer-form')).not.toBeNull()
+    app.destroy()
+  })
+
+  it('renders a state-aware multiple-result Progress snapshot', async () => {
+    let session = createTrainingSession({ ...DEFAULT_CONFIG, problemCount: 1 }, 19, 0)
+    session = setCurrentDraft(session, session.problems[0]!.answer)
+    session = advanceSession(checkCurrentAnswer(session, 100), 200)
+    const best = createSprintResult(session)!
+    const latest = structuredClone(best)
+    latest.id = 'latest-result'
+    latest.sessionId = 'latest-session'
+    latest.completedAt = 900
+    latest.totals.accuracyPercent = 50
+    latest.totals.activeElapsedMs = 2_000
+    latest.totals.scoredElapsedMs = 2_000
+    latest.problems[0]!.activeElapsedMs = 2_000
+    latest.problems[0]!.scoredElapsedMs = 2_000
+    const resultStore = createResultStore()
+    resultStore.listCompleted = vi.fn(async () => ({ ...emptyResultPage(), results: [latest, best] }))
+    resultStore.listRanked = vi.fn(async () => ({ ...emptyResultPage(), results: [best] }))
+    resultStore.listCompletedSince = vi.fn(async () => ({ ...emptyResultPage(), results: [latest, best] }))
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store: createStore({ status: 'empty', state: null }), resultStore, now: () => 1_000 })
+    app.start()
+    root.querySelector<HTMLButtonElement>('[data-action="show-progress"]')!.click()
+
+    await vi.waitFor(() => expect(root.textContent).toContain('Recent snapshot'))
+    expect(root.querySelector('.progress-snapshot')?.textContent).toContain('Sprints · last 7 days2')
+    expect(root.querySelector('.progress-snapshot')?.textContent).toContain('Fastest scored time<1 sec')
+    expect(root.querySelector('.progress-snapshot')?.textContent).toContain('Latest first-try accuracy50%')
+    expect(root.querySelectorAll('.history-list time')).toHaveLength(2)
     app.destroy()
   })
 
@@ -224,7 +267,7 @@ describe('MathTrainingApp lifecycle', () => {
     maxDigits.dispatchEvent(new Event('change', { bubbles: true }))
     await vi.waitFor(() => expect(resultStore.listCompleted).toHaveBeenCalledTimes(2))
     root.querySelector<HTMLButtonElement>('[data-action="show-progress"]')!.click()
-    await vi.waitFor(() => expect(root.textContent).toContain('No completed results yet.'))
+    await vi.waitFor(() => expect(root.textContent).toContain('No results for this setup yet'))
     resolveOld({ ...emptyResultPage(), results: [oldResult] })
     await Promise.resolve()
     await Promise.resolve()
@@ -246,7 +289,7 @@ describe('MathTrainingApp lifecycle', () => {
 
     await vi.waitFor(() => expect(resultStore.listCompleted).toHaveBeenCalledTimes(2))
     root.querySelector<HTMLButtonElement>('[data-action="show-progress"]')!.click()
-    await vi.waitFor(() => expect(root.textContent).toContain('No completed results yet.'))
+    await vi.waitFor(() => expect(root.textContent).toContain('No results for this setup yet'))
     root.querySelector<HTMLButtonElement>('[data-action="show-practice"]')!.click()
     expect(root.textContent).toContain('Custom setup')
     expect(root.querySelector('#setup-example-host')?.textContent).toContain('7 questions')
@@ -801,8 +844,11 @@ describe('MathTrainingApp lifecycle', () => {
 
   it('surfaces corrupt records discovered while loading another history page', async () => {
     const resultStore = createResultStore()
+    let session = createTrainingSession({ ...DEFAULT_CONFIG, problemCount: 1 }, 81, 1_000)
+    session = advanceSession(skipCurrentProblem(session, 1_100), 1_200)
+    const result = createSprintResult(session)!
     const listCompleted = vi.fn()
-      .mockResolvedValueOnce({ ...emptyResultPage(), nextCursor: 'next-page' })
+      .mockResolvedValueOnce({ ...emptyResultPage(), results: [result], nextCursor: 'next-page' })
       .mockResolvedValueOnce({ ...emptyResultPage(), corruptRecords: 1 })
     resultStore.listCompleted = listCompleted
     const root = document.querySelector<HTMLElement>('#app')!

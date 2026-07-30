@@ -24,6 +24,9 @@ test('navigates Practice and Progress with keyboard-friendly disclosures', async
   await progress.press('Enter')
   await expect(page.getByRole('heading', { name: 'See what your practice is building.' })).toBeFocused()
   await expect(progress).toHaveAttribute('aria-current', 'page')
+  await expect(page.getByRole('heading', { name: 'No results for this setup yet' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Start this setup' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Reset this history' })).toHaveCount(0)
   await expectAccessible(page, 'progress')
 
   const practice = page.getByRole('button', { name: 'Practice', exact: true })
@@ -244,13 +247,18 @@ test('persists vertical practice and scores a skipped question', async ({ page }
   await page.getByRole('button', { name: 'View progress' }).click()
   await expect(page.getByRole('heading', { name: 'See what your practice is building.' })).toBeFocused()
   const historyCard = page.getByRole('heading', { name: 'Performance history' }).locator('..')
+  await expect(page.getByRole('heading', { name: 'Your baseline is ready' })).toBeVisible()
+  await expect(page.locator('.progress-snapshot')).toContainText('Latest first-try accuracy')
+  await expect(page.locator('.history-list time')).toHaveAttribute('datetime', /T/)
   await expect(historyCard).toContainText('Full history')
   await expect(page.getByRole('button', { name: 'Reset this history' })).toBeEnabled()
   await page.getByRole('button', { name: 'Reset this history' }).click()
   const resetDialog = page.getByRole('dialog', { name: 'Reset performance history?' })
   await resetDialog.getByRole('button', { name: 'Reset history' }).click()
   await expect(page.locator('#app-announcer')).toHaveText('Performance history reset for these settings.')
-  await expect(page.getByText('No completed results yet.')).toBeVisible()
+  await expect(resetDialog).toBeHidden()
+  await expect(page.getByRole('heading', { name: 'No results for this setup yet' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'No results for this setup yet' })).toBeFocused()
 })
 
 test('retries the exact difficult set in a resumable unscored mastery review', async ({ page }) => {
@@ -320,8 +328,8 @@ test('retries the exact difficult set in a resumable unscored mastery review', a
   expect(await indexedResultCount(page)).toBe(1)
 
   await page.getByRole('button', { name: 'View progress' }).click()
-  await expect(page.locator('.history-scope')).toContainText('Exact setup')
-  await expect(page.locator('.history-scope')).toContainText('3 questions')
+  await expect(page.locator('.progress-context')).toContainText('Showing exact setup')
+  await expect(page.locator('.progress-context')).toContainText('3 questions')
 })
 
 test('has no detectable WCAG A or AA violations in core views', async ({ page }) => {

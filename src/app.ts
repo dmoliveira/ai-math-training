@@ -35,7 +35,7 @@ import {
 import { DEFAULT_PREFERENCES, configKey, effectiveOrientation, type AudioCue, type AudioPort, type SharePort } from './sprint/contracts'
 import { SynthAudio } from './sprint/audio'
 import { BrowserShare, createSocialShareLinks } from './sprint/share'
-import { createSharePayload, createSprintResult, dailyStatistics, rankResults, type DailyStatistics, type ResultStore, type SprintResult } from './sprint/results'
+import { createSharePayload, createSprintResult, rankResults, type ResultStore, type SprintResult } from './sprint/results'
 import { PRACTICE_PRESETS, deriveLearningMilestones, deriveNextMission, matchingPresetId, practicePreset } from './sprint/guidance'
 import { createSprintDebrief, selectHistoricalFocus, type DebriefItem } from './sprint/debrief'
 import { IndexedDbResultStore } from './storage/result-store'
@@ -70,7 +70,7 @@ interface HistoryViewState {
   status: 'loading' | 'ok' | 'error'
   results: SprintResult[]
   ranked: SprintResult[]
-  daily: DailyStatistics[]
+  recentResults: SprintResult[]
   nextCursor: string | null
 }
 
@@ -1254,11 +1254,14 @@ export class MathTrainingApp {
     const snapshot = this.history?.configKey === key ? this.history : null
     if (!snapshot || snapshot.status === 'loading') return this.historyMessage('Loading results…')
     if (snapshot.status === 'error') return this.historyMessage('History is unavailable. Practice still works normally.', true)
-    const rows = snapshot.results.length === 0 ? '<p>No completed results yet.</p>' : `<ol class="history-list">${snapshot.results.map((result) => `<li><time>${escapeHtml(formatResultDate(result.completedAt))}</time><strong>${formatDuration(result.totals.scoredElapsedMs)}</strong><span>${result.totals.accuracyPercent}% · ${result.totals.skipped} skipped</span></li>`).join('')}</ol>`
-    const trend = snapshot.daily.length === 0 ? '<p>Complete a session to start your seven-day trend.</p>' : `<ul class="daily-stats">${snapshot.daily.map((day) => `<li><strong>${escapeHtml(day.date)}</strong><span>Best ${formatDuration(day.bestMs)}</span><span>Average ${formatDuration(day.averageMs)}</span><span>Median ${formatDuration(day.medianMs)}</span></li>`).join('')}</ul>`
+    if (snapshot.results.length === 0) return `<section class="history-card history-empty" aria-labelledby="history-heading"><p class="step-label">Private on this device</p><h2 id="history-heading" tabindex="-1">No results for this setup yet</h2><p>Complete one sprint with the setup shown above to begin a private comparison.</p><button class="button button--primary" type="button" data-action="start-current-setup">Start this setup</button></section>`
+    const latest = snapshot.results[0]!
+    const best = snapshot.ranked[0]
+    const dashboard = `<section class="progress-snapshot" aria-labelledby="snapshot-heading"><p class="step-label">${snapshot.results.length === 1 ? 'First result' : 'Recent snapshot'}</p><h3 id="snapshot-heading">${snapshot.results.length === 1 ? 'Your baseline is ready' : 'At a glance'}</h3><dl><div><dt>Sprints · last 7 days</dt><dd>${snapshot.recentResults.length}</dd></div><div><dt>Fastest scored time</dt><dd>${best ? progressDuration(best.totals.scoredElapsedMs) : 'Not ranked yet'}</dd></div><div><dt>Latest first-try accuracy</dt><dd>${latest.totals.accuracyPercent}%</dd></div></dl></section>`
+    const rows = `<ol class="history-list">${snapshot.results.map((result) => { const absolute = formatResultDate(result.completedAt); return `<li><time datetime="${new Date(result.completedAt).toISOString()}" title="${escapeHtml(absolute)}" aria-label="${escapeHtml(absolute)}">${escapeHtml(formatProgressDate(result.completedAt, this.now()))}</time><strong>${progressDuration(result.totals.scoredElapsedMs)}</strong><span>${result.totals.accuracyPercent}% · ${result.totals.skipped} skipped</span></li>` }).join('')}</ol>`
     const historicalFocus = this.hasActiveSession() ? [] : selectHistoricalFocus(snapshot.results, this.state.settings)
     const focusPractice = historicalFocus.length === 0 ? '' : `<aside class="history-focus"><div><p class="step-label">Private focus practice</p><h3>Revisit past questions</h3><p>${historicalFocus.length} ${pluralize(historicalFocus.length, 'question')} from this exact setup were previously retried, skipped, or revealed.</p></div><button class="button button--primary" type="button" data-action="start-history-review">Practice past focus questions</button></aside>`
-    return `<section class="history-card" aria-labelledby="history-heading"><p class="step-label">Private on this device</p><h2 id="history-heading">Performance history</h2><div class="history-scope"><strong>Exact setup</strong><span>${escapeHtml(formatConfigSummary(this.state.settings))}</span><small>Changing any setup choice starts a separate comparison group.</small></div>${trend}${focusPractice}<h3>Full history</h3>${rows}<div class="history-actions">${snapshot.nextCursor ? '<button class="button button--secondary" type="button" data-action="load-history">Load more</button>' : ''}<button class="button button--quiet" type="button" data-action="show-reset" ${disabled(snapshot.results.length === 0)}>Reset this history</button></div></section>`
+    return `<section class="history-card" aria-labelledby="history-heading"><p class="step-label">Private on this device</p><h2 id="history-heading" tabindex="-1">Performance history</h2>${dashboard}${focusPractice}<h3>Full history</h3>${rows}<div class="history-actions">${snapshot.nextCursor ? '<button class="button button--secondary" type="button" data-action="load-history">Load more</button>' : ''}<button class="button button--quiet" type="button" data-action="show-reset">Reset this history</button></div></section>`
   }
 
   private historyMessage(message: string, canReset = false): string {
@@ -1280,7 +1283,7 @@ export class MathTrainingApp {
     if (!this.started) return
     if (write.status !== 'saved' && write.status !== 'duplicate') {
       if (generation === this.historyGeneration) {
-        this.history = { configKey: result.configKey, status: 'error', results: [], ranked: [], daily: [], nextCursor: null }
+        this.history = { configKey: result.configKey, status: 'error', results: [], ranked: [], recentResults: [], nextCursor: null }
         this.syncHistorySurfaces()
       }
       this.announce('This result could not be saved to private history. Your completed session is still available now.')
@@ -1301,16 +1304,16 @@ export class MathTrainingApp {
   private async refreshHistory(config: TrainingConfig = this.state.view === 'complete' && this.state.session ? this.state.session.config : this.state.settings): Promise<void> {
     const key = configKey(config)
     const generation = ++this.historyGeneration
-    this.history = { configKey: key, status: 'loading', results: [], ranked: [], daily: [], nextCursor: null }
+    this.history = { configKey: key, status: 'loading', results: [], ranked: [], recentResults: [], nextCursor: null }
     this.syncHistorySurfaces()
     const since = Math.max(0, this.now() - 7 * 24 * 60 * 60 * 1_000)
     const [page, ranked, recent] = await Promise.all([this.resultStore.listCompleted(key, undefined, 25), this.resultStore.listRanked(key, 5), this.resultStore.listCompletedSince(key, since)])
     if (!this.started || generation !== this.historyGeneration) return
     const corruptRecords = page.corruptRecords + ranked.corruptRecords + recent.corruptRecords
     if (page.status !== 'ok' || ranked.status !== 'ok' || recent.status !== 'ok' || page.truncated || ranked.truncated || recent.truncated || corruptRecords > 0) {
-      this.history = { configKey: key, status: 'error', results: [], ranked: [], daily: [], nextCursor: null }
+      this.history = { configKey: key, status: 'error', results: [], ranked: [], recentResults: [], nextCursor: null }
       if (corruptRecords > 0) this.announce('Some private history data could not be read. Reset this history to remove damaged records.')
-    } else this.history = { configKey: key, status: 'ok', results: page.results, ranked: ranked.results, daily: dailyStatistics(recent.results, resolvedTimeZone()), nextCursor: page.nextCursor }
+    } else this.history = { configKey: key, status: 'ok', results: page.results, ranked: ranked.results, recentResults: recent.results, nextCursor: page.nextCursor }
     this.syncHistorySurfaces()
   }
 
@@ -1321,7 +1324,7 @@ export class MathTrainingApp {
     const page = await this.resultStore.listCompleted(snapshot.configKey, snapshot.nextCursor, 25)
     if (!this.started || generation !== this.historyGeneration || page.status !== 'ok') return
     if (page.corruptRecords > 0 || page.truncated) {
-      this.history = { configKey: snapshot.configKey, status: 'error', results: [], ranked: [], daily: [], nextCursor: null }
+      this.history = { configKey: snapshot.configKey, status: 'error', results: [], ranked: [], recentResults: [], nextCursor: null }
       this.announce('Some private history data could not be read. Reset this history to remove damaged records.')
       this.syncHistorySurfaces()
       return
@@ -1336,8 +1339,11 @@ export class MathTrainingApp {
     const result = await this.resultStore.clearConfig(configKey(config))
     if (!this.started || generation !== this.historyGeneration) return
     if (result.status !== 'cleared') { this.announce('Performance history could not be reset.'); return }
+    const dialog = document.getElementById('reset-history-dialog')
+    if (dialog instanceof HTMLDialogElement && dialog.open) dialog.close()
     this.announce('Performance history reset for these settings.')
     await this.refreshHistory(config)
+    this.root.querySelector<HTMLElement>('#history-card-host #history-heading')?.focus({ preventScroll: true })
   }
 
   private syncHistorySurfaces(): void {
@@ -1612,7 +1618,7 @@ export class MathTrainingApp {
       this.currentResult = advanced.mode === 'sprint' ? createSprintResult(advanced) : null
       if (this.currentResult) {
         this.historyGeneration += 1
-        this.history = { configKey: this.currentResult.configKey, status: 'loading', results: [], ranked: [], daily: [], nextCursor: null }
+        this.history = { configKey: this.currentResult.configKey, status: 'loading', results: [], ranked: [], recentResults: [], nextCursor: null }
       }
     }
     this.persist(true)
@@ -2118,8 +2124,21 @@ function formatResultDate(timestamp: number): string {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(timestamp)
 }
 
-function resolvedTimeZone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+function formatProgressDate(timestamp: number, now: number): string {
+  const start = (value: number): number => {
+    const date = new Date(value)
+    date.setHours(0, 0, 0, 0)
+    return date.getTime()
+  }
+  const days = Math.round((start(now) - start(timestamp)) / 86_400_000)
+  const time = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' }).format(timestamp)
+  if (days === 0) return `Today, ${time}`
+  if (days === 1) return `Yesterday, ${time}`
+  return formatResultDate(timestamp)
+}
+
+function progressDuration(milliseconds: number): string {
+  return milliseconds < 1_000 ? '<1 sec' : formatDuration(milliseconds)
 }
 
 function checked(value: boolean): string {
