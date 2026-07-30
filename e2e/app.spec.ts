@@ -189,7 +189,7 @@ test('restores a draft, counts retries, reveals, and resumes after save and exit
   await expect(page.locator('.numi--pose-thinking')).toBeVisible()
   await expect(page.locator('#app-announcer')).toContainText('Answer revealed:')
 
-  await page.getByRole('button', { name: 'Next question' }).click()
+  await page.getByRole('button', { name: 'Next question' }).press('Enter')
   await expect(page.getByText('Question 2 of 2')).toBeVisible()
   await page.getByRole('button', { name: 'Save & exit' }).click()
 
@@ -295,7 +295,7 @@ test('retries the exact difficult set in a resumable unscored mastery review', a
   await page.getByLabel('Your answer').press('Enter')
   await page.getByLabel('Your answer').fill(String(first.answer))
   await page.getByLabel('Your answer').press('Enter')
-  await page.getByRole('button', { name: 'Next question' }).click()
+  await page.getByRole('button', { name: 'Next question' }).press('Enter')
 
   sourceExpressions.push((await currentAddition(page)).label)
   await page.getByRole('button', { name: 'Skip question (+20s)' }).click()
@@ -304,7 +304,7 @@ test('retries the exact difficult set in a resumable unscored mastery review', a
   sourceExpressions.push((await currentAddition(page)).label)
   await page.getByRole('button', { name: 'Reveal answer' }).click()
   await page.getByRole('dialog', { name: 'Reveal this answer?' }).getByRole('button', { name: 'Reveal answer' }).click()
-  await page.getByRole('button', { name: 'See results' }).click()
+  await page.getByRole('button', { name: 'See results' }).press('Enter')
 
   await expect(page.getByRole('button', { name: /Review these 3 questions/ })).toBeVisible()
   await openCompletionMore(page)
@@ -332,12 +332,12 @@ test('retries the exact difficult set in a resumable unscored mastery review', a
   await expect(page.getByRole('heading', { name: 'Continue your review' })).toBeVisible()
   await page.getByRole('button', { name: 'Resume' }).click()
   await expect(page.locator('.expression')).toHaveAttribute('aria-label', sourceExpressions[0]!)
-  await page.getByRole('button', { name: 'Next question' }).click()
+  await page.getByRole('button', { name: 'Next question' }).press('Enter')
 
   for (let index = 1; index < sourceExpressions.length; index += 1) {
     await expect(page.locator('.expression')).toHaveAttribute('aria-label', sourceExpressions[index]!)
     await page.getByRole('button', { name: 'Skip question' }).click()
-    await page.getByRole('button', { name: index === sourceExpressions.length - 1 ? 'Finish review' : 'Next question' }).click()
+    await page.getByRole('button', { name: index === sourceExpressions.length - 1 ? 'Finish review' : 'Next question' }).press('Enter')
   }
 
   await expect(page.getByRole('heading', { name: 'Review complete.' })).toBeVisible()
