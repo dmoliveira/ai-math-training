@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { MathTrainingApp } from './app'
-import { DEFAULT_CONFIG, speakExpression } from './math/engine'
+import { DEFAULT_CONFIG, speakExpression, type TrainingConfig } from './math/engine'
 import { DEFAULT_PREFERENCES, type SharePayload } from './sprint/contracts'
 import { createSprintResult, type ResultPage, type ResultStore, type ResultStoreWriteResult } from './sprint/results'
 import { advanceSession, checkCurrentAnswer, createReviewSession, createTrainingSession, pauseSession, setCurrentDraft, skipCurrentProblem } from './state/session'
@@ -116,6 +116,9 @@ describe('MathTrainingApp lifecycle', () => {
     expect(root.querySelector('[data-action="show-progress"]')?.getAttribute('aria-current')).toBe('page')
     await vi.waitFor(() => expect(root.textContent).toContain('No results for this setup yet'))
     expect(root.querySelector('[data-action="start-current-setup"]')).not.toBeNull()
+    expect(root.querySelectorAll('[data-action="start-current-setup"]')).toHaveLength(1)
+    expect(root.querySelectorAll('[data-action="show-customize"]')).toHaveLength(1)
+    expect(root.querySelector('.progress-context')).toBeNull()
     expect(root.querySelector('[data-action="show-reset"]')).toBeNull()
     expect(root.textContent).not.toContain('Full history')
     const saved = store.save.mock.calls.at(-1)![0] as PersistedAppState
@@ -123,6 +126,59 @@ describe('MathTrainingApp lifecycle', () => {
 
     root.querySelector<HTMLButtonElement>('[data-action="show-practice"]')!.click()
     expect(root.dataset.section).toBe('practice')
+    expect(document.activeElement?.id).toBe('setup-heading')
+    app.destroy()
+  })
+
+  it.each(['sprint', 'review'] as const)('preserves an incomplete %s while visiting Progress', async (mode) => {
+    const state = createPracticeState(2)
+    if (mode === 'review') {
+      let source = createTrainingSession({ ...DEFAULT_CONFIG, problemCount: 2 }, 12, 0)
+      source = advanceSession(skipCurrentProblem(source, 100), 200)
+      state.session = pauseSession(createReviewSession(source, 300)!, 400)
+    }
+    state.session = setCurrentDraft(state.session!, '123')
+    const store = createStore({ status: 'ok', state })
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store, resultStore: createResultStore(), now: () => 2_000 })
+    app.start()
+
+    root.querySelector<HTMLButtonElement>('[data-action="show-progress"]')!.click()
+    const paused = (store.save.mock.calls.at(-1)![0] as PersistedAppState).session
+    expect(paused).toMatchObject({ mode, currentIndex: state.session.currentIndex })
+    expect(paused?.progress[paused.currentIndex]?.draft).toBe('123')
+    root.querySelector<HTMLButtonElement>('[data-action="show-practice"]')!.click()
+
+    const returned = store.save.mock.calls.at(-1)![0] as PersistedAppState
+    expect(returned.session).toEqual(paused)
+    expect(root.getAttribute('data-section')).toBe('practice')
+    expect(root.querySelector('[data-action="resume-session"]')).not.toBeNull()
+    expect(document.activeElement?.id).toBe('setup-heading')
+    app.destroy()
+  })
+
+  it('returns from completed Progress with the completed sprint settings and no stale session', () => {
+    const config = { ...DEFAULT_CONFIG, operations: ['multiply'], problemCount: 1 } satisfies TrainingConfig
+    let session = createTrainingSession(config, 9, 0)
+    session = setCurrentDraft(session, String(session.problems[0]!.answer))
+    session = advanceSession(checkCurrentAnswer(session, 100), 200)
+    const state: PersistedAppState = {
+      ...createPracticeState(),
+      view: 'complete',
+      settings: { ...DEFAULT_CONFIG, operations: [...DEFAULT_CONFIG.operations] },
+      session,
+    }
+    const store = createStore({ status: 'ok', state })
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store, resultStore: createResultStore(), now: () => 1_000 })
+    app.start()
+
+    root.querySelector<HTMLButtonElement>('[data-action="show-progress"]')!.click()
+    root.querySelector<HTMLButtonElement>('[data-action="show-practice"]')!.click()
+
+    const returned = store.save.mock.calls.at(-1)![0] as PersistedAppState
+    expect(returned.settings).toEqual(config)
+    expect(returned.session).toBeNull()
     expect(document.activeElement?.id).toBe('setup-heading')
     app.destroy()
   })
@@ -141,6 +197,7 @@ describe('MathTrainingApp lifecycle', () => {
     expect(root.querySelector<HTMLDetailsElement>('#customize-setup')?.open).toBe(true)
     expect(root.querySelector<HTMLDetailsElement>('#advanced-setup')?.open).toBe(true)
     expect(document.activeElement?.id).toBe('maxDigits')
+    expect(root.querySelectorAll<HTMLButtonElement>('#customize-setup button[type="submit"]')).toHaveLength(1)
     app.destroy()
   })
 
@@ -917,14 +974,19 @@ describe('MathTrainingApp lifecycle', () => {
     app.start()
     expect(document.documentElement.dataset.theme).toBe('forest')
     expect(document.documentElement.dataset.density).toBe('comfortable')
+    expect(root.querySelector('[data-action="cycle-theme"]')?.getAttribute('role')).toBe('switch')
+    expect(root.querySelector('[data-action="cycle-theme"]')?.getAttribute('aria-checked')).toBe('false')
+    expect(root.querySelector('[data-action="toggle-density"]')?.getAttribute('aria-checked')).toBe('false')
     expect(root.querySelector('.footer-links')?.textContent).toContain('Bio')
 
     root.querySelector<HTMLButtonElement>('[data-action="cycle-theme"]')!.click()
     expect(document.documentElement.dataset.theme).toBe('midnight')
+    expect(root.querySelector('[data-action="cycle-theme"]')?.getAttribute('aria-checked')).toBe('true')
     expect(root.querySelector('.appearance-menu > summary')).toBe(document.activeElement)
     expect(root.dataset.motion).toBe('settled')
     root.querySelector<HTMLButtonElement>('[data-action="toggle-density"]')!.click()
     expect(document.documentElement.dataset.density).toBe('compact')
+    expect(root.querySelector('[data-action="toggle-density"]')?.getAttribute('aria-checked')).toBe('true')
     expect(root.querySelector('.appearance-menu > summary')).toBe(document.activeElement)
     expect(store.save).toHaveBeenCalled()
 
