@@ -1155,6 +1155,16 @@
     font-size: clamp(1.35rem, 2.5vw, 1.7rem);
   }
 
+  .practice-presets__intro {
+    display: grid;
+    gap: 5px;
+  }
+
+  .practice-presets__intro > p:last-child {
+    color: var(--muted);
+    font-size: .88rem;
+  }
+
   .preset-state {
     flex: 0 0 auto;
     padding: 6px 9px;
@@ -1238,6 +1248,11 @@
     border-radius: var(--radius-lg);
     background: rgb(255 255 255 / 84%);
     box-shadow: var(--shadow-sm);
+  }
+
+  .session-quick-controls {
+    display: flex;
+    gap: 7px;
   }
 
   .auto-next-toggle,
@@ -2287,6 +2302,10 @@
     .auto-next-toggle,
     .timer-visibility-toggle {
       width: fit-content;
+    }
+
+    .session-quick-controls {
+      flex-wrap: wrap;
     }
 
     .progress-copy {
@@ -3775,7 +3794,8 @@
   .numi--coach,
   .challenge-card > span,
   .auto-next-toggle,
-  .timer-visibility-toggle {
+  .timer-visibility-toggle,
+  .preference-switch i {
     transition: none !important;
   }
 }
@@ -3865,18 +3885,32 @@
   .appearance-menu__panel button:hover { background: var(--primary-pale); }
   .appearance-menu__panel button span { display: grid; gap: 2px; }
   .appearance-menu__panel small { color: var(--muted); font-size: .75rem; }
-  .appearance-menu__panel button > b {
-    min-width: 38px;
-    padding: 4px 7px;
+  .appearance-menu__panel .preference-switch {
+    position: relative;
+    width: 42px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid var(--border-strong);
     border-radius: 999px;
     background: var(--surface-muted);
-    color: var(--muted);
-    font-size: .7rem;
-    text-align: center;
   }
-  .appearance-menu__panel button[aria-checked="true"] > b {
+  .appearance-menu__panel .preference-switch i {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: transform 150ms ease, background-color 150ms ease;
+  }
+  .appearance-menu__panel button[aria-checked="true"] .preference-switch {
+    border-color: var(--primary);
     background: var(--primary-pale);
-    color: var(--primary);
+  }
+  .appearance-menu__panel button[aria-checked="true"] .preference-switch i {
+    background: var(--primary);
+    transform: translateX(18px);
   }
 
   .footer-links {
@@ -3997,6 +4031,15 @@
   .setup-disclosure--nested > summary { min-height: 58px; }
   .setup-disclosure--nested .setup-disclosure__body { background: var(--surface); }
 
+  .setup-option-section { padding-top: 18px; }
+  .setup-option-section + .setup-option-section {
+    margin-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+  .setup-option-section__heading { display: grid; gap: 4px; padding: 2px 2px 4px; }
+  .setup-option-section__heading h3 { font-size: 1.08rem; }
+  .setup-option-section__heading p { color: var(--muted); font-size: .82rem; }
+
   .progress-page {
     max-width: 900px;
     padding-top: clamp(34px, 6vw, 72px);
@@ -4090,11 +4133,40 @@
   .setup-disclosure > summary { min-height: 54px; padding-block: 8px; }
   .setup-disclosure > summary small { font-size: .72rem; }
   .setup-disclosure__body { padding-inline: 10px; }
+  .question-count-row { grid-template-columns: 1fr; }
+  .preset-row { grid-template-columns: repeat(4, minmax(44px, 1fr)); }
+  .preset { min-width: 44px; }
+  .challenge-grid { grid-template-columns: 1fr; gap: 7px; }
+  .challenge-card > span {
+    min-height: 64px;
+    grid-template-columns: minmax(92px, auto) 1fr;
+    align-items: center;
+    align-content: initial;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+  .challenge-card small { line-height: 1.35; }
   .keyboard-note { display: none; }
-  .guided-challenges-heading { margin-top: 24px; }
+  .practice-presets { padding: 16px 12px; }
+  .practice-presets__intro { gap: 3px; }
+  .practice-presets__intro h2 { font-size: 1.2rem; }
   .practice-preset { min-height: 0; padding: 14px; }
   .practice-preset > small { margin-top: 3px; }
   .practice-preset > b { margin-top: 9px; }
+  .practice-page { padding-top: 12px; }
+  .session-toolbar { gap: 8px; padding: 10px; border-radius: 16px; }
+  .progress-copy { grid-template-columns: auto minmax(80px, 1fr); gap: 9px; }
+  .session-quick-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+  .session-quick-controls .auto-next-toggle,
+  .session-quick-controls .timer-visibility-toggle { width: 100%; justify-content: center; }
+  .session-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; }
+  .session-metrics div { min-width: 0; padding: 7px 5px 0; text-align: center; }
+  .session-metrics dt { font-size: .58rem; letter-spacing: .035em; }
+  .session-metrics dd { font-size: .86rem; }
+  .question-trail { display: none; }
+  .practice-card { margin-top: 10px; }
+  .problem-panel { padding: 18px 14px; }
+  .expression { margin-block: 20px; }
   .progress-page { padding-top: 22px; }
   .progress-intro .eyebrow { margin-bottom: 8px; }
   .progress-intro h1 { margin-top: 0; font-size: 2.25rem; }
@@ -4108,7 +4180,9 @@
   .app-nav button[aria-current="page"],
   .setup-disclosure,
   .appearance-menu__panel,
-  .appearance-menu__panel button > b { border: 1px solid CanvasText; }
+  .appearance-menu__panel .preference-switch,
+  .appearance-menu__panel .preference-switch i { border: 1px solid CanvasText; }
+  .appearance-menu__panel button[aria-checked="true"] .preference-switch i { background: Highlight; }
   .app-nav button:focus,
   .practice-preset:focus,
   .setup-disclosure > summary:focus,

@@ -137,6 +137,11 @@ test('offers accessible one-click challenges without mobile overflow', async ({ 
   await expect(presets).toHaveCount(3)
   expect(await page.locator('#setup-form').evaluate((form, preset) => Boolean(form.compareDocumentPosition(preset as Node) & Node.DOCUMENT_POSITION_FOLLOWING), await presets.first().elementHandle())).toBe(true)
   await openCustomization(page, true)
+  for (const count of [5, 10, 20, 30]) {
+    const countBox = await page.getByRole('button', { name: String(count), exact: true }).boundingBox()
+    expect(countBox?.width).toBeGreaterThanOrEqual(44)
+    expect(countBox?.height).toBeGreaterThanOrEqual(44)
+  }
   await expect(page.getByRole('radio', { name: /Random/ })).toBeChecked()
   await expect(page.locator('.numi--setup')).toBeHidden()
   await expect(page.getByRole('radio', { name: /Level/ })).toHaveCount(5)
@@ -146,7 +151,7 @@ test('offers accessible one-click challenges without mobile overflow', async ({ 
   expect(levelCard?.height).toBeGreaterThanOrEqual(44)
   await levelFive.check()
   await expect(page.locator('.challenge-setting .selection-note')).toContainText('Level 5 starts at the approachable side')
-  await expect(page.getByRole('heading', { name: 'Start with a complete challenge' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Pick a ready-made sprint' })).toBeVisible()
   const quickWin = page.locator('[data-preset="quick-win"]')
   await expect(quickWin).toHaveAttribute('aria-pressed', 'false')
   const box = await quickWin.boundingBox()
@@ -159,6 +164,43 @@ test('offers accessible one-click challenges without mobile overflow', async ({ 
   await page.keyboard.press('Enter')
   await expect(page.getByText('Question 1 of 5')).toBeVisible()
   await expect(page.getByLabel('Your answer')).toBeFocused()
+})
+
+test('orients deep mobile starts and completion around the current task', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 568 })
+  await setQuestionCount(page, 1)
+  const deepStart = page.getByRole('button', { name: 'Start with these settings' })
+  await deepStart.scrollIntoViewIfNeeded()
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(100)
+  await deepStart.click()
+
+  await expect(page.getByLabel('Your answer')).toBeFocused()
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThanOrEqual(8)
+  for (const locator of [page.locator('.expression'), page.getByLabel('Your answer')]) {
+    const box = await locator.boundingBox()
+    expect(box?.y ?? -1).toBeGreaterThanOrEqual(0)
+    expect((box?.y ?? 568) + (box?.height ?? 1)).toBeLessThanOrEqual(568)
+  }
+  await expect(page.locator('.question-trail')).toBeHidden()
+  const toolbarContained = await page.locator('.session-toolbar').evaluate((toolbar) =>
+    [...toolbar.children].every((child) => {
+      const parent = toolbar.getBoundingClientRect()
+      const box = child.getBoundingClientRect()
+      return box.left >= parent.left && box.right <= parent.right
+    }),
+  )
+  expect(toolbarContained).toBe(true)
+  await expectAccessible(page, 'compact mobile session')
+
+  const current = await currentAddition(page)
+  await page.getByLabel('Your answer').fill(String(current.answer))
+  await page.getByLabel('Your answer').press('Enter')
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(100)
+  await page.getByRole('button', { name: 'See results' }).press('Enter')
+  await expect(page.getByRole('heading', { name: 'Perfect run!' })).toBeFocused()
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThanOrEqual(8)
+  await expect(page.locator('.results-grid')).toBeInViewport()
 })
 
 test('restores a draft, counts retries, reveals, and resumes after save and exit', async ({ page }) => {
@@ -510,6 +552,16 @@ test('persists themes and compact mode with accessible icon navigation', async (
   await expect(page.getByLabel('Appearance settings')).toBeFocused()
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'midnight')
   await expect(page.locator('html')).toHaveAttribute('data-density', 'compact')
+  await page.getByLabel('Appearance settings').click()
+  await page.emulateMedia({ forcedColors: 'active' })
+  const switchVisual = await page.getByRole('switch', { name: /Dark theme/ }).locator('.preference-switch').evaluate((element) => ({
+    borderWidth: getComputedStyle(element).borderWidth,
+    thumbTransform: getComputedStyle(element.querySelector('i')!).transform,
+  }))
+  expect(switchVisual.borderWidth).not.toBe('0px')
+  expect(switchVisual.thumbTransform).not.toBe('none')
+  await page.emulateMedia({ forcedColors: 'none' })
+  await page.keyboard.press('Escape')
   await expectAccessible(page, 'midnight compact setup')
   const dimensions = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }))
   expect(dimensions.scroll).toBeLessThanOrEqual(dimensions.client)

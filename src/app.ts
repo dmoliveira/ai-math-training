@@ -154,7 +154,7 @@ export class MathTrainingApp {
     this.render(this.state.view === 'setup' ? { event: 'setup-enter' } : this.state.view === 'practice' ? { event: 'practice-enter' } : undefined)
     if (this.currentResult) this.queueCompletedResultSave(this.currentResult)
     else if (!(this.state.view !== 'setup' && this.state.session?.mode === 'review')) void this.refreshHistory()
-    if (this.state.view !== 'setup') this.focusCurrentView()
+    if (this.state.view !== 'setup') this.orientCurrentView()
   }
 
   destroy(): void {
@@ -649,8 +649,8 @@ export class MathTrainingApp {
           <details class="appearance-menu">
             <summary aria-label="Appearance settings">${icon(this.state.preferences.theme === 'forest' ? 'sun' : 'moon')}<span>Appearance</span></summary>
             <div class="appearance-menu__panel">
-              <button type="button" role="switch" data-action="cycle-theme" aria-checked="${this.state.preferences.theme === 'midnight'}">${icon(this.state.preferences.theme === 'forest' ? 'moon' : 'sun')}<span><strong>Dark theme</strong><small>${this.state.preferences.theme === 'midnight' ? 'On' : 'Off'}</small></span><b aria-hidden="true">${this.state.preferences.theme === 'midnight' ? 'On' : 'Off'}</b></button>
-              <button type="button" role="switch" data-action="toggle-density" aria-checked="${this.state.preferences.density === 'compact'}">${icon(this.state.preferences.density === 'compact' ? 'comfortable' : 'compact')}<span><strong>Compact layout</strong><small>${this.state.preferences.density === 'compact' ? 'On' : 'Off'}</small></span><b aria-hidden="true">${this.state.preferences.density === 'compact' ? 'On' : 'Off'}</b></button>
+              <button type="button" role="switch" data-action="cycle-theme" aria-checked="${this.state.preferences.theme === 'midnight'}">${icon(this.state.preferences.theme === 'forest' ? 'moon' : 'sun')}<span><strong>Dark theme</strong><small>Lower-light colours</small></span><b class="preference-switch" aria-hidden="true"><i></i></b></button>
+              <button type="button" role="switch" data-action="toggle-density" aria-checked="${this.state.preferences.density === 'compact'}">${icon(this.state.preferences.density === 'compact' ? 'comfortable' : 'compact')}<span><strong>Compact layout</strong><small>Tighter spacing</small></span><b class="preference-switch" aria-hidden="true"><i></i></b></button>
             </div>
           </details>
           ${practiceActions}
@@ -727,6 +727,9 @@ export class MathTrainingApp {
               <summary data-action="toggle-setup-disclosure"><span>More sprint options</span><small>Challenge, expression pattern, layout, sound, and timers.</small></summary>
               <div class="setup-disclosure__body">
 
+            <section class="setup-option-section" aria-labelledby="question-design-heading">
+              <div class="setup-option-section__heading"><h3 id="question-design-heading">Question design</h3><p>Shape the difficulty and structure of each expression.</p></div>
+
             <fieldset class="setting-group challenge-setting">
               <legend>Challenge path</legend>
               <p class="field-hint">Levels choose progressively tougher questions within your number and operation settings.</p>
@@ -777,6 +780,11 @@ export class MathTrainingApp {
               }
             </fieldset>
 
+            </section>
+
+            <section class="setup-option-section" aria-labelledby="practice-experience-heading">
+              <div class="setup-option-section__heading"><h3 id="practice-experience-heading">Practice experience</h3><p>Choose how a sprint looks, moves, and feels.</p></div>
+
             <fieldset class="setting-group">
               <legend>Experience</legend>
               <p class="field-hint">Choose how your sprint looks, fits, and sounds.</p>
@@ -804,6 +812,8 @@ export class MathTrainingApp {
               </div>
             </fieldset>
 
+            </section>
+
               </div>
             </details>
 
@@ -814,7 +824,6 @@ export class MathTrainingApp {
             </details>
             <p class="keyboard-note"><span aria-hidden="true">⌨</span> Built for keyboard and number-pad practice.</p>
           </form>
-          <div class="guided-challenges-heading"><p class="step-label">Or choose a guided challenge</p><p>One tap sets every option and starts immediately.</p></div>
           ${this.renderPracticePresets()}
         </div>
 
@@ -839,15 +848,11 @@ export class MathTrainingApp {
     const selectedPreset = matchingPresetId(this.state.settings)
     return `
       <section class="practice-presets" aria-labelledby="practice-presets-heading">
-        <div class="card-heading">
-          <div><p class="step-label">Choose a path</p><h2 id="practice-presets-heading">Start with a complete challenge</h2></div>
-          <span class="preset-state">${selectedPreset === 'custom' ? 'Custom setup' : 'Preset selected'}</span>
-        </div>
-        <p class="field-hint">Each option sets every practice choice and starts immediately. You can still build your own below.</p>
+        <div class="practice-presets__intro"><p class="step-label">Guided challenges</p><h2 id="practice-presets-heading">Pick a ready-made sprint</h2><p>Each choice sets every option and starts immediately.</p></div>
         <div class="practice-preset-grid">
           ${PRACTICE_PRESETS.map((preset) => {
             const active = selectedPreset === preset.id
-            return `<button class="practice-preset ${active ? 'practice-preset--active' : ''}" type="button" data-action="start-preset" data-preset="${preset.id}" aria-pressed="${active}"><span>${escapeHtml(preset.eyebrow)}</span><strong>${escapeHtml(preset.title)}</strong><small>${escapeHtml(preset.description)}</small><b>${active ? 'Selected · Start' : 'Start challenge'} <span aria-hidden="true">→</span></b></button>`
+            return `<button class="practice-preset ${active ? 'practice-preset--active' : ''}" type="button" data-action="start-preset" data-preset="${preset.id}" aria-pressed="${active}"><span>${escapeHtml(preset.eyebrow)}</span><strong>${escapeHtml(preset.title)}</strong><small>${escapeHtml(preset.description)}</small><b>${active ? 'Matches your setup · Start' : 'Start'} <span aria-hidden="true">→</span></b></button>`
           }).join('')}
         </div>
       </section>`
@@ -1006,8 +1011,10 @@ export class MathTrainingApp {
               <span style="width: ${(progressValue / session.problems.length) * 100}%"></span>
             </div>
           </div>
-          <button class="auto-next-toggle" type="button" data-action="toggle-auto-advance" aria-pressed="${this.state.preferences.autoAdvance}"><span aria-hidden="true">${this.state.preferences.autoAdvance ? '⚡' : 'Ⅱ'}</span><span>Auto-next <strong>${this.state.preferences.autoAdvance ? 'On' : 'Off'}</strong></span></button>
-          <button class="timer-visibility-toggle" type="button" data-action="toggle-timers" aria-pressed="${this.state.preferences.hideTimers}"><span aria-hidden="true">${this.state.preferences.hideTimers ? '◌' : '◷'}</span><span>Timers <strong>${this.state.preferences.hideTimers ? 'Hidden' : 'Shown'}</strong></span></button>
+          <div class="session-quick-controls">
+            <button class="auto-next-toggle" type="button" data-action="toggle-auto-advance" aria-label="Auto-next ${this.state.preferences.autoAdvance ? 'On' : 'Off'}" aria-pressed="${this.state.preferences.autoAdvance}"><span aria-hidden="true">${this.state.preferences.autoAdvance ? '⚡' : 'Ⅱ'}</span><span>Auto-next <strong>${this.state.preferences.autoAdvance ? 'On' : 'Off'}</strong></span></button>
+            <button class="timer-visibility-toggle" type="button" data-action="toggle-timers" aria-label="Timers ${this.state.preferences.hideTimers ? 'Hidden' : 'Shown'}" aria-pressed="${this.state.preferences.hideTimers}"><span aria-hidden="true">${this.state.preferences.hideTimers ? '◌' : '◷'}</span><span>Timers <strong>${this.state.preferences.hideTimers ? 'Hidden' : 'Shown'}</strong></span></button>
+          </div>
           <dl class="session-metrics">
             <div><dt>Session time</dt><dd id="elapsed-time">${this.state.preferences.hideTimers ? 'Hidden' : formatDuration(getElapsedMs(session, this.now()))}</dd></div>
             <div><dt>This question</dt><dd id="question-time">${this.state.preferences.hideTimers ? 'Hidden' : questionElapsed === null ? '—' : formatDuration(questionElapsed)}</dd></div>
@@ -1412,7 +1419,7 @@ export class MathTrainingApp {
     this.notice = null
     this.persist(true)
     this.render({ event: 'practice-enter' })
-    this.focusPracticeInput()
+    this.orientCurrentView()
   }
 
   private requestSprintStart(config: TrainingConfig): void {
@@ -1443,7 +1450,7 @@ export class MathTrainingApp {
     this.notice = null
     this.persist(true)
     this.render({ event: 'practice-enter' })
-    this.focusPracticeInput()
+    this.orientCurrentView()
   }
 
   private startReviewSession(): void {
@@ -1460,7 +1467,7 @@ export class MathTrainingApp {
     this.persist(true)
     this.render({ event: 'practice-enter' })
     this.announce(`Focused review started with ${review.problems.length} ${pluralize(review.problems.length, 'question')}. This round is unscored.`)
-    this.focusPracticeInput()
+    this.orientCurrentView()
   }
 
   private startHistoricalReviewSession(): void {
@@ -1480,7 +1487,7 @@ export class MathTrainingApp {
     this.persist(true)
     this.render({ event: 'practice-enter' })
     this.announce(`Private focus review started with ${review.problems.length} ${pluralize(review.problems.length, 'question')}. This round is unscored.`)
-    this.focusPracticeInput()
+    this.orientCurrentView()
   }
 
   private resumeSavedSession(): void {
@@ -1494,7 +1501,7 @@ export class MathTrainingApp {
     this.notice = null
     this.persist(true)
     this.render({ event: 'resume-enter' })
-    this.focusPracticeInput()
+    this.orientCurrentView()
   }
 
   private saveAndExit(): void {
@@ -1517,7 +1524,7 @@ export class MathTrainingApp {
     this.render({ event: 'resume-enter' })
     void this.refreshHistory()
     this.announce(this.notice.message)
-    this.focusCurrentView()
+    this.orientCurrentView()
   }
 
   private discardSession(): void {
@@ -1530,7 +1537,7 @@ export class MathTrainingApp {
     this.persist(true)
     this.render({ event: 'setup-enter' })
     void this.refreshHistory()
-    this.focusCurrentView()
+    this.orientCurrentView()
   }
 
   private changeSettings(): void {
@@ -1544,7 +1551,7 @@ export class MathTrainingApp {
     this.persist(true)
     this.render({ event: 'setup-enter' })
     void this.refreshHistory()
-    this.focusCurrentView()
+    this.orientCurrentView()
   }
 
   private goHome(): void {
@@ -1553,7 +1560,7 @@ export class MathTrainingApp {
 
   private openSetupDestination(destination: SetupDestination): void {
     if (this.state.view === 'setup' && this.setupDestination === destination) {
-      document.getElementById(destination === 'practice' ? 'setup-heading' : 'progress-heading')?.focus()
+      this.orientCurrentView()
       return
     }
     this.cancelAutoAdvance()
@@ -1578,7 +1585,7 @@ export class MathTrainingApp {
         })
       } else if (this.history?.configKey !== configKey(settings)) void this.refreshHistory(settings)
     }
-    this.focusCurrentView()
+    this.orientCurrentView()
   }
 
   private submitCurrentAnswer(): void {
@@ -1636,7 +1643,8 @@ export class MathTrainingApp {
     this.persist(true)
     this.render(advanced.completedAt === null ? { event: 'question-enter' } : { event: 'completion-enter' })
     if (this.currentResult && advanced.mode === 'sprint' && advanced.completedAt !== null && session.completedAt === null) this.queueCompletedResultSave(this.currentResult)
-    this.focusCurrentView()
+    if (advanced.completedAt === null) this.focusCurrentView()
+    else this.orientCurrentView()
   }
 
   private scheduleAutoAdvance(session: TrainingSession): void {
@@ -1888,6 +1896,33 @@ export class MathTrainingApp {
       const heading = this.setupDestination === 'progress' ? 'progress-heading' : 'setup-heading'
       window.requestAnimationFrame(() => document.getElementById(heading)?.focus())
     }
+  }
+
+  private orientCurrentView(): void {
+    const previousScrollBehavior = document.documentElement.style.scrollBehavior
+    document.documentElement.style.scrollBehavior = 'auto'
+    this.resetPageScroll()
+    window.requestAnimationFrame(() => {
+      const target = this.state.view === 'practice'
+        ? this.hasCoarsePointer()
+          ? document.getElementById('problem-heading')
+          : this.root.querySelector<HTMLElement>('#answer-input:not([readonly])')
+        : this.state.view === 'complete'
+          ? document.getElementById('completion-heading')
+          : document.getElementById(this.setupDestination === 'progress' ? 'progress-heading' : 'setup-heading')
+      target?.focus({ preventScroll: true })
+      this.resetPageScroll()
+      window.requestAnimationFrame(() => {
+        this.resetPageScroll()
+        document.documentElement.style.scrollBehavior = previousScrollBehavior
+      })
+    })
+  }
+
+  private resetPageScroll(): void {
+    if (document.scrollingElement) document.scrollingElement.scrollTop = 0
+    document.documentElement.scrollTop = 0
+    document.body.scrollTop = 0
   }
 
   private focusPracticeInput(): void {

@@ -110,7 +110,9 @@ describe('MathTrainingApp lifecycle', () => {
     app.start()
 
     expect(root.querySelector('[data-action="show-practice"]')?.getAttribute('aria-current')).toBe('page')
+    document.documentElement.scrollTop = 500
     root.querySelector<HTMLButtonElement>('[data-action="show-progress"]')!.click()
+    expect(document.documentElement.scrollTop).toBe(0)
     expect(root.dataset.section).toBe('progress')
     expect(document.activeElement?.id).toBe('progress-heading')
     expect(root.querySelector('[data-action="show-progress"]')?.getAttribute('aria-current')).toBe('page')
@@ -196,6 +198,8 @@ describe('MathTrainingApp lifecycle', () => {
 
     expect(root.querySelector<HTMLDetailsElement>('#customize-setup')?.open).toBe(true)
     expect(root.querySelector<HTMLDetailsElement>('#advanced-setup')?.open).toBe(true)
+    expect(root.querySelector('#question-design-heading')?.textContent).toBe('Question design')
+    expect(root.querySelector('#practice-experience-heading')?.textContent).toBe('Practice experience')
     expect(document.activeElement?.id).toBe('maxDigits')
     expect(root.querySelectorAll<HTMLButtonElement>('#customize-setup button[type="submit"]')).toHaveLength(1)
     app.destroy()
@@ -208,7 +212,9 @@ describe('MathTrainingApp lifecycle', () => {
     app.start()
 
     expect(root.querySelectorAll('[data-action="start-preset"]')).toHaveLength(3)
-    expect(root.textContent).toContain('Custom setup')
+    expect(root.textContent).toContain('Pick a ready-made sprint')
+    expect(root.querySelectorAll('[data-action="start-preset"][aria-pressed="true"]')).toHaveLength(0)
+    document.documentElement.scrollTop = 700
     root.querySelector<HTMLButtonElement>('[data-preset="quick-win"]')!.click()
 
     const saved = store.save.mock.calls.at(-1)![0] as PersistedAppState
@@ -216,6 +222,8 @@ describe('MathTrainingApp lifecycle', () => {
     expect(saved.settings).toEqual({ minDigits: 1, maxDigits: 1, operatorCount: 1, operationMode: 'same', operations: ['add', 'subtract'], problemCount: 5, challenge: 1 })
     expect(saved.session?.config).toEqual(saved.settings)
     expect(root.querySelector('#answer-form')).not.toBeNull()
+    expect(document.documentElement.scrollTop).toBe(0)
+    expect(document.activeElement?.id).toBe('answer-input')
     app.destroy()
   })
 
@@ -348,7 +356,7 @@ describe('MathTrainingApp lifecycle', () => {
     root.querySelector<HTMLButtonElement>('[data-action="show-progress"]')!.click()
     await vi.waitFor(() => expect(root.textContent).toContain('No results for this setup yet'))
     root.querySelector<HTMLButtonElement>('[data-action="show-practice"]')!.click()
-    expect(root.textContent).toContain('Custom setup')
+    expect(root.querySelectorAll('[data-action="start-preset"][aria-pressed="true"]')).toHaveLength(0)
     expect(root.querySelector('#setup-example-host')?.textContent).toContain('7 questions')
     expect(root.querySelector('[data-action="start-preset"][aria-pressed="true"]')).toBeNull()
     app.destroy()
@@ -630,10 +638,13 @@ describe('MathTrainingApp lifecycle', () => {
     await Promise.resolve()
     expect(audio.unlockFromUserGesture).toHaveBeenCalledOnce()
 
+    document.documentElement.scrollTop = 800
     root.querySelector<HTMLFormElement>('#setup-form')!.dispatchEvent(
       new SubmitEvent('submit', { bubbles: true, cancelable: true }),
     )
     expect(root.querySelector('.expression--vertical')).not.toBeNull()
+    expect(document.documentElement.scrollTop).toBe(0)
+    expect(document.activeElement?.id).toBe('answer-input')
     expect(root.textContent).toContain('0% complete')
 
     now = 4_000
@@ -646,10 +657,13 @@ describe('MathTrainingApp lifecycle', () => {
     expect(root.querySelector('#question-time')?.textContent).toBe('00:03')
     expect(audio.play).toHaveBeenCalledWith('skip')
 
+    document.documentElement.scrollTop = 600
     root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(
       new SubmitEvent('submit', { bubbles: true, cancelable: true }),
     )
     expect(root.textContent).toContain('Session complete.')
+    expect(document.documentElement.scrollTop).toBe(0)
+    expect(document.activeElement?.id).toBe('completion-heading')
     expect(root.dataset.motion).toBe('completion-enter')
     expect(root.querySelector<HTMLImageElement>('.numi--completion.numi--pose-encouraging')?.src).toContain('/numi/encouraging.webp')
     expect(root.textContent).not.toContain('Perfect run!')
@@ -977,6 +991,8 @@ describe('MathTrainingApp lifecycle', () => {
     expect(root.querySelector('[data-action="cycle-theme"]')?.getAttribute('role')).toBe('switch')
     expect(root.querySelector('[data-action="cycle-theme"]')?.getAttribute('aria-checked')).toBe('false')
     expect(root.querySelector('[data-action="toggle-density"]')?.getAttribute('aria-checked')).toBe('false')
+    expect(root.querySelectorAll('.preference-switch')).toHaveLength(2)
+    expect(root.querySelector('.appearance-menu__panel')?.textContent).not.toContain('Off')
     expect(root.querySelector('.footer-links')?.textContent).toContain('Bio')
 
     root.querySelector<HTMLButtonElement>('[data-action="cycle-theme"]')!.click()
