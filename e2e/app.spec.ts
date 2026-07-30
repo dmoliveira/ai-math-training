@@ -26,6 +26,9 @@ test('navigates Practice and Progress with keyboard-friendly disclosures', async
   await expect(progress).toHaveAttribute('aria-current', 'page')
   await expect(page.getByRole('heading', { name: 'No results for this setup yet' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Start this setup' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Start this setup' })).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Change setup' })).toHaveCount(1)
+  await expect(page.locator('.progress-context')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Reset this history' })).toHaveCount(0)
   await expectAccessible(page, 'progress')
 
@@ -40,6 +43,18 @@ test('navigates Practice and Progress with keyboard-friendly disclosures', async
   await maxDigits.selectOption('4')
   await expect(page.locator('#customize-setup')).toHaveJSProperty('open', true)
   await expect(maxDigits).toBeFocused()
+})
+
+test('keeps an unfinished sprint resumable while visiting Progress', async ({ page }) => {
+  await setQuestionCount(page, 2)
+  await page.getByRole('button', { name: /Start sprint/ }).first().click()
+  await page.getByLabel('Your answer').fill('123')
+  await page.getByRole('button', { name: 'Progress', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'See what your practice is building.' })).toBeFocused()
+  await page.getByRole('button', { name: 'Practice', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Continue your session' })).toBeVisible()
+  await page.getByRole('button', { name: 'Resume' }).click()
+  await expect(page.getByLabel('Your answer')).toHaveValue('123')
 })
 
 test('completes an addition session entirely from the keyboard', async ({ page }) => {
@@ -112,6 +127,12 @@ test('moves to the next question automatically after correct feedback', async ({
 
 test('offers accessible one-click challenges without mobile overflow', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 568 })
+  const start = page.getByRole('button', { name: /Start sprint/ }).first()
+  const customize = page.locator('#customize-setup > summary')
+  for (const control of [page.locator('.setup-summary'), start, customize]) {
+    const box = await control.boundingBox()
+    expect((box?.y ?? 568) + (box?.height ?? 1)).toBeLessThanOrEqual(568)
+  }
   const presets = page.locator('[data-action="start-preset"]')
   await expect(presets).toHaveCount(3)
   expect(await page.locator('#setup-form').evaluate((form, preset) => Boolean(form.compareDocumentPosition(preset as Node) & Node.DOCUMENT_POSITION_FOLLOWING), await presets.first().elementHandle())).toBe(true)
@@ -119,6 +140,7 @@ test('offers accessible one-click challenges without mobile overflow', async ({ 
   await expect(page.getByRole('radio', { name: /Random/ })).toBeChecked()
   await expect(page.locator('.numi--setup')).toBeHidden()
   await expect(page.getByRole('radio', { name: /Level/ })).toHaveCount(5)
+  await expect(page.getByRole('button', { name: 'Start with these settings' })).toBeVisible()
   const levelFive = page.getByRole('radio', { name: /Level 5/ })
   const levelCard = await page.locator('input[name="challenge"][value="5"] + span').boundingBox()
   expect(levelCard?.height).toBeGreaterThanOrEqual(44)
@@ -473,13 +495,18 @@ test('persists themes and compact mode with accessible icon navigation', async (
   await expect(page.getByLabel('Appearance settings')).toBeFocused()
   await expect(page.locator('.appearance-menu')).not.toHaveAttribute('open', '')
   await page.getByLabel('Appearance settings').click()
-  await page.getByRole('heading', { name: 'Start a sprint in seconds.' }).click()
+  await page.locator('.setup-summary').click()
   await expect(page.locator('.appearance-menu')).not.toHaveAttribute('open', '')
   await page.getByLabel('Appearance settings').click()
-  await page.getByRole('button', { name: /Midnight theme/ }).click()
+  const darkTheme = page.getByRole('switch', { name: /Dark theme/ })
+  await expect(darkTheme).toHaveAttribute('aria-checked', 'false')
+  await darkTheme.click()
   await expect(page.getByLabel('Appearance settings')).toBeFocused()
   await page.getByLabel('Appearance settings').click()
-  await page.getByRole('button', { name: /Compact layout/ }).click()
+  await expect(page.getByRole('switch', { name: /Dark theme/ })).toHaveAttribute('aria-checked', 'true')
+  const compactLayout = page.getByRole('switch', { name: /Compact layout/ })
+  await expect(compactLayout).toHaveAttribute('aria-checked', 'false')
+  await compactLayout.click()
   await expect(page.getByLabel('Appearance settings')).toBeFocused()
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'midnight')
   await expect(page.locator('html')).toHaveAttribute('data-density', 'compact')
@@ -566,8 +593,10 @@ test('has no page-level overflow at supported responsive widths', async ({ page 
   for (const viewport of [
     { width: 320, height: 568 },
     { width: 390, height: 844 },
+    { width: 430, height: 844 },
+    { width: 431, height: 844 },
     { width: 768, height: 1024 },
-    { width: 1280, height: 800 },
+    { width: 1440, height: 1000 },
   ]) {
     await page.setViewportSize(viewport)
     await page.goto(appPath)
@@ -577,12 +606,18 @@ test('has no page-level overflow at supported responsive widths', async ({ page 
         scrollWidth: document.documentElement.scrollWidth,
         clientWidth: document.documentElement.clientWidth,
         headerHeight: header?.getBoundingClientRect().height ?? 0,
+        headerPosition: getComputedStyle(document.querySelector<HTMLElement>('.site-header')!).position,
       }
     })
     expect(dimensions.scrollWidth, `${viewport.width}px layout overflowed`).toBeLessThanOrEqual(
       dimensions.clientWidth,
     )
     expect(dimensions.headerHeight, `${viewport.width}px header wrapped`).toBeLessThanOrEqual(74)
+    if (viewport.width <= 760) expect(dimensions.headerPosition).toBe('sticky')
+    for (const name of ['Practice', 'Progress']) {
+      const navBox = await page.getByRole('button', { name, exact: true }).boundingBox()
+      expect(navBox?.height, `${name} target at ${viewport.width}px`).toBeGreaterThanOrEqual(44)
+    }
   }
 })
 

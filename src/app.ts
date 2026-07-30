@@ -207,6 +207,10 @@ export class MathTrainingApp {
       case 'view-progress':
         this.openSetupDestination('progress')
         break
+      case 'show-customize':
+        this.customizeSetupOpen = true
+        this.openSetupDestination('practice')
+        break
       case 'toggle-setup-disclosure': {
         const details = actionElement.closest<HTMLDetailsElement>('details')
         if (details?.id === 'customize-setup') this.customizeSetupOpen = !details.open
@@ -645,8 +649,8 @@ export class MathTrainingApp {
           <details class="appearance-menu">
             <summary aria-label="Appearance settings">${icon(this.state.preferences.theme === 'forest' ? 'sun' : 'moon')}<span>Appearance</span></summary>
             <div class="appearance-menu__panel">
-              <button type="button" data-action="cycle-theme">${icon(this.state.preferences.theme === 'forest' ? 'moon' : 'sun')}<span><strong>${this.state.preferences.theme === 'forest' ? 'Midnight' : 'Forest'} theme</strong><small>Switch colour theme</small></span></button>
-              <button type="button" data-action="toggle-density" aria-pressed="${this.state.preferences.density === 'compact'}">${icon(this.state.preferences.density === 'compact' ? 'comfortable' : 'compact')}<span><strong>${this.state.preferences.density === 'compact' ? 'Comfortable' : 'Compact'} layout</strong><small>Change spacing density</small></span></button>
+              <button type="button" role="switch" data-action="cycle-theme" aria-checked="${this.state.preferences.theme === 'midnight'}">${icon(this.state.preferences.theme === 'forest' ? 'moon' : 'sun')}<span><strong>Dark theme</strong><small>${this.state.preferences.theme === 'midnight' ? 'On' : 'Off'}</small></span><b aria-hidden="true">${this.state.preferences.theme === 'midnight' ? 'On' : 'Off'}</b></button>
+              <button type="button" role="switch" data-action="toggle-density" aria-checked="${this.state.preferences.density === 'compact'}">${icon(this.state.preferences.density === 'compact' ? 'comfortable' : 'compact')}<span><strong>Compact layout</strong><small>${this.state.preferences.density === 'compact' ? 'On' : 'Off'}</small></span><b aria-hidden="true">${this.state.preferences.density === 'compact' ? 'On' : 'Off'}</b></button>
             </div>
           </details>
           ${practiceActions}
@@ -668,7 +672,7 @@ export class MathTrainingApp {
     return `
       <main id="main-content" class="page-shell setup-page">
         <section class="setup-hero" aria-labelledby="setup-heading">
-          <div><p class="eyebrow"><span aria-hidden="true">✦</span> Focused arithmetic practice</p><h1 id="setup-heading" tabindex="-1">Start a sprint in seconds.</h1><p class="lede">Choose a ready-made challenge or use your current setup. Everything stays private in this browser.</p></div>
+          <div><p class="eyebrow"><span aria-hidden="true">✦</span> Focused arithmetic practice</p><h1 id="setup-heading" tabindex="-1">Start a sprint in seconds.</h1><p class="lede">Use your setup or pick a guided challenge. Everything stays private in this browser.</p></div>
           <img class="numi numi--setup numi--pose-ready" src="${numiSrc('ready')}" alt="" width="512" height="512" aria-hidden="true" />
         </section>
 
@@ -805,6 +809,7 @@ export class MathTrainingApp {
 
             <div id="setup-example-host">${example}</div>
             ${errors.length > 0 ? this.renderConfigErrors(errors) : ''}
+            <div class="setup-customize-action"><div><strong>Ready to practise?</strong><small>Use every setting above.</small></div><button class="button button--primary" type="submit" ${disabled(errors.length > 0)}>Start with these settings <span aria-hidden="true">→</span></button></div>
               </div>
             </details>
             <p class="keyboard-note"><span aria-hidden="true">⌨</span> Built for keyboard and number-pad practice.</p>
@@ -823,12 +828,8 @@ export class MathTrainingApp {
       <main id="main-content" class="page-shell progress-page">
         <section class="progress-intro" aria-labelledby="progress-heading">
           <div><p class="eyebrow"><span aria-hidden="true">↗</span> Private progress</p><h1 id="progress-heading" tabindex="-1">See what your practice is building.</h1><p class="lede">Results are grouped by your exact setup and stay on this device.</p></div>
-          <button class="button button--primary" type="button" data-action="show-practice">Start a sprint</button>
         </section>
-        <section class="progress-context" aria-label="Progress filter">
-          <div><span>Showing exact setup</span><strong>${escapeHtml(formatConfigSummary(this.state.settings))}</strong></div>
-          <button class="button button--quiet" type="button" data-action="show-practice">Change setup</button>
-        </section>
+        <div id="progress-context-host">${this.renderProgressContext()}</div>
         <div id="history-card-host">${this.renderHistoryCard()}</div>
         ${this.renderSetupDialogs()}
       </main>`
@@ -850,6 +851,13 @@ export class MathTrainingApp {
           }).join('')}
         </div>
       </section>`
+  }
+
+  private renderProgressContext(): string {
+    const key = configKey(this.state.settings)
+    const snapshot = this.history?.configKey === key ? this.history : null
+    if (snapshot?.status === 'ok' && snapshot.results.length === 0) return ''
+    return `<section class="progress-context" aria-label="Progress filter"><div><span>Showing exact setup</span><strong>${escapeHtml(formatConfigSummary(this.state.settings))}</strong></div><button class="button button--quiet" type="button" data-action="show-customize">Change setup</button></section>`
   }
 
   private renderWelcomeBack(): string {
@@ -1254,7 +1262,7 @@ export class MathTrainingApp {
     const snapshot = this.history?.configKey === key ? this.history : null
     if (!snapshot || snapshot.status === 'loading') return this.historyMessage('Loading results…')
     if (snapshot.status === 'error') return this.historyMessage('History is unavailable. Practice still works normally.', true)
-    if (snapshot.results.length === 0) return `<section class="history-card history-empty" aria-labelledby="history-heading"><p class="step-label">Private on this device</p><h2 id="history-heading" tabindex="-1">No results for this setup yet</h2><p>Complete one sprint with the setup shown above to begin a private comparison.</p><button class="button button--primary" type="button" data-action="start-current-setup">Start this setup</button></section>`
+    if (snapshot.results.length === 0) return `<section class="history-card history-empty" aria-labelledby="history-heading"><p class="step-label">Private on this device</p><h2 id="history-heading" tabindex="-1">No results for this setup yet</h2><p>Complete one sprint to begin a private comparison for this exact setup.</p><div class="history-empty__setup"><span>Current setup</span><strong>${escapeHtml(formatConfigSummary(this.state.settings))}</strong></div><div class="history-empty__actions"><button class="button button--primary" type="button" data-action="start-current-setup">Start this setup</button><button class="button button--quiet" type="button" data-action="show-customize">Change setup</button></div></section>`
     const latest = snapshot.results[0]!
     const best = snapshot.ranked[0]
     const dashboard = `<section class="progress-snapshot" aria-labelledby="snapshot-heading"><p class="step-label">${snapshot.results.length === 1 ? 'First result' : 'Recent snapshot'}</p><h3 id="snapshot-heading">${snapshot.results.length === 1 ? 'Your baseline is ready' : 'At a glance'}</h3><dl><div><dt>Sprints · last 7 days</dt><dd>${snapshot.recentResults.length}</dd></div><div><dt>Fastest scored time</dt><dd>${best ? progressDuration(best.totals.scoredElapsedMs) : 'Not ranked yet'}</dd></div><div><dt>Latest first-try accuracy</dt><dd>${latest.totals.accuracyPercent}%</dd></div></dl></section>`
@@ -1351,6 +1359,8 @@ export class MathTrainingApp {
     if (welcome) welcome.innerHTML = this.renderWelcomeBack()
     const setup = this.root.querySelector<HTMLElement>('#history-card-host')
     if (setup) setup.innerHTML = this.renderHistoryCard()
+    const progressContext = this.root.querySelector<HTMLElement>('#progress-context-host')
+    if (progressContext) progressContext.innerHTML = this.renderProgressContext()
     const ranking = this.root.querySelector<HTMLElement>('#completion-ranking-host')
     if (ranking && this.state.session) ranking.innerHTML = this.renderCompletionRanking(this.state.session)
   }
@@ -1550,7 +1560,9 @@ export class MathTrainingApp {
     this.suspendAudio()
     const session = this.state.session
     const settings = this.state.view === 'complete' && session?.mode === 'sprint' ? cloneConfig(session.config) : this.state.settings
-    const resumable = this.state.view === 'practice' && session?.completedAt === null ? pauseSession(session, this.now()) : null
+    const resumable = session?.completedAt === null
+      ? this.state.view === 'practice' ? pauseSession(session, this.now()) : session
+      : null
     this.state = { ...this.state, view: 'setup', settings, session: resumable }
     this.setupDestination = destination
     this.notice = null
