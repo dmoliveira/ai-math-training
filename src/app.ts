@@ -207,6 +207,12 @@ export class MathTrainingApp {
       case 'view-progress':
         this.openSetupDestination('progress')
         break
+      case 'toggle-setup-disclosure': {
+        const details = actionElement.closest<HTMLDetailsElement>('details')
+        if (details?.id === 'customize-setup') this.customizeSetupOpen = !details.open
+        if (details?.id === 'advanced-setup') this.advancedSetupOpen = !details.open
+        break
+      }
       case 'resume-session':
         this.resumeSavedSession()
         break
@@ -682,7 +688,7 @@ export class MathTrainingApp {
             <button class="button button--primary button--large setup-start" type="submit" ${disabled(errors.length > 0)}>Start sprint <span aria-hidden="true">→</span></button>
 
             <details id="customize-setup" class="setup-disclosure" ${customizeOpen ? 'open' : ''}>
-              <summary><span>Customize setup</span><small>Operations, number size, questions, challenge, and sprint behaviour.</small></summary>
+              <summary data-action="toggle-setup-disclosure"><span>Customize setup</span><small>Operations, number size, questions, challenge, and sprint behaviour.</small></summary>
               <div class="setup-disclosure__body">
 
             <fieldset class="setting-group">
@@ -714,7 +720,7 @@ export class MathTrainingApp {
             </fieldset>
 
             <details id="advanced-setup" class="setup-disclosure setup-disclosure--nested" ${advancedOpen ? 'open' : ''}>
-              <summary><span>More sprint options</span><small>Challenge, expression pattern, layout, sound, and timers.</small></summary>
+              <summary data-action="toggle-setup-disclosure"><span>More sprint options</span><small>Challenge, expression pattern, layout, sound, and timers.</small></summary>
               <div class="setup-disclosure__body">
 
             <fieldset class="setting-group challenge-setting">

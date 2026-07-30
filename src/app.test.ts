@@ -127,11 +127,8 @@ describe('MathTrainingApp lifecycle', () => {
     const root = document.querySelector<HTMLElement>('#app')!
     const app = new MathTrainingApp(root, { store: createStore({ status: 'empty', state: null }), now: () => 1_000 })
     app.start()
-    for (const id of ['customize-setup', 'advanced-setup']) {
-      const details = root.querySelector<HTMLDetailsElement>(`#${id}`)!
-      details.open = true
-      details.dispatchEvent(new Event('toggle'))
-    }
+    root.querySelector<HTMLElement>('#customize-setup > summary')!.click()
+    root.querySelector<HTMLElement>('#advanced-setup > summary')!.click()
     const maxDigits = root.querySelector<HTMLSelectElement>('#maxDigits')!
     maxDigits.focus()
     maxDigits.value = '4'
