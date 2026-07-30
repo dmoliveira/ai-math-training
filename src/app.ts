@@ -145,6 +145,8 @@ export class MathTrainingApp {
     this.root.addEventListener('submit', this.handleSubmit)
     this.root.addEventListener('keydown', this.handleKeydown)
     this.root.addEventListener('toggle', this.handleToggle, true)
+    document.addEventListener('keydown', this.handleAppearanceEscape, true)
+    document.addEventListener('pointerdown', this.handleAppearancePointerDown)
     document.addEventListener('visibilitychange', this.handleVisibilityChange)
     window.addEventListener('beforeunload', this.handleBeforeUnload)
     this.timerId = window.setInterval(this.handleTimerTick, 250)
@@ -164,6 +166,8 @@ export class MathTrainingApp {
     this.root.removeEventListener('submit', this.handleSubmit)
     this.root.removeEventListener('keydown', this.handleKeydown)
     this.root.removeEventListener('toggle', this.handleToggle, true)
+    document.removeEventListener('keydown', this.handleAppearanceEscape, true)
+    document.removeEventListener('pointerdown', this.handleAppearancePointerDown)
     document.removeEventListener('visibilitychange', this.handleVisibilityChange)
     window.removeEventListener('beforeunload', this.handleBeforeUnload)
     if (this.timerId !== null) window.clearInterval(this.timerId)
@@ -303,6 +307,22 @@ export class MathTrainingApp {
     if (!(details instanceof HTMLDetailsElement)) return
     if (details.id === 'customize-setup') this.customizeSetupOpen = details.open
     if (details.id === 'advanced-setup') this.advancedSetupOpen = details.open
+  }
+
+  private readonly handleAppearanceEscape = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape') return
+    const menu = this.root.querySelector<HTMLDetailsElement>('.appearance-menu[open]')
+    if (!menu) return
+    event.preventDefault()
+    event.stopPropagation()
+    menu.open = false
+    menu.querySelector<HTMLElement>('summary')?.focus()
+  }
+
+  private readonly handleAppearancePointerDown = (event: PointerEvent): void => {
+    const menu = this.root.querySelector<HTMLDetailsElement>('.appearance-menu[open]')
+    if (!menu || (event.target instanceof Node && menu.contains(event.target))) return
+    menu.open = false
   }
 
   private readonly handleChange = (event: Event): void => {
@@ -649,7 +669,6 @@ export class MathTrainingApp {
         <div class="setup-column">
           ${resumeCard}
           <div id="welcome-back-host">${this.renderWelcomeBack()}</div>
-          ${this.renderPracticePresets()}
           <form id="setup-form" class="settings-card setup-launch-card" novalidate>
             <div class="card-heading">
               <div>
@@ -784,6 +803,8 @@ export class MathTrainingApp {
             </details>
             <p class="keyboard-note"><span aria-hidden="true">⌨</span> Built for keyboard and number-pad practice.</p>
           </form>
+          <div class="guided-challenges-heading"><p class="step-label">Or choose a guided challenge</p><p>One tap sets every option and starts immediately.</p></div>
+          ${this.renderPracticePresets()}
         </div>
 
         ${this.renderSetupDialogs()}
@@ -1116,11 +1137,16 @@ export class MathTrainingApp {
               <dd>${formatDuration(summary.scoredElapsedMs)}<small>${formatDuration(summary.elapsedMs)} active + ${formatDuration(summary.penaltyMs)} penalties</small></dd>
             </div>
           </dl>
-
-          ${this.renderSprintDebrief(session)}
-          ${this.renderLearningMilestones(session)}
-          <div id="completion-ranking-host">${this.renderCompletionRanking(session)}</div>
-          ${this.renderShareCard(session)}
+          ${this.renderSprintNextStep(session)}
+          <details class="completion-more">
+            <summary><span>More from this sprint</span><small>Question evidence, milestones, rankings, and sharing</small></summary>
+            <div class="completion-more__body">
+              ${this.renderSprintDebrief(session)}
+              ${this.renderLearningMilestones(session)}
+              <div id="completion-ranking-host">${this.renderCompletionRanking(session)}</div>
+              ${this.renderShareCard(session)}
+            </div>
+          </details>
           <p class="completion-note"><span aria-hidden="true">🌱</span> A little consistent practice makes big numbers feel smaller.</p>
         </section>
       </main>
@@ -1151,15 +1177,14 @@ export class MathTrainingApp {
             <div class="result-card"><dt>Still unresolved</dt><dd>${unresolved}<small>skipped or revealed</small></dd></div>
             <div class="result-card"><dt>Active review time</dt><dd>${formatDuration(summary.elapsedMs)}<small>unscored practice</small></dd></div>
           </dl>
-          <section class="training-insight training-insight--review" aria-labelledby="review-coaching-heading">
-            <p class="step-label">Your next move</p><h2 id="review-coaching-heading">Keep the learning loop going</h2><p>${escapeHtml(coaching)}</p>
-          </section>
-          ${this.renderLearningMilestones(session)}
-          <div class="completion-actions">
-            <button class="button button--primary button--large" type="button" data-action="practice-again">Review again <span aria-hidden="true">↻</span></button>
-            <button class="button button--secondary button--large" type="button" data-action="change-settings">Start another sprint</button>
-            <button class="button button--quiet button--large" type="button" data-action="view-progress">View progress</button>
-          </div>
+          ${this.renderReviewNextStep(session)}
+          <details class="completion-more">
+            <summary><span>More from this review</span><small>Coaching notes and milestones</small></summary>
+            <div class="completion-more__body">
+              <section class="training-insight training-insight--review" aria-labelledby="review-coaching-heading"><p class="step-label">Review insight</p><h2 id="review-coaching-heading">Keep the learning loop going</h2><p>${escapeHtml(coaching)}</p></section>
+              ${this.renderLearningMilestones(session)}
+            </div>
+          </details>
           <p class="completion-note"><span aria-hidden="true">🔒</span> Review rounds stay resumable on this device but never affect rankings or history.</p>
         </section>
       </main>`
@@ -1171,11 +1196,33 @@ export class MathTrainingApp {
     return `<section class="learning-milestones" aria-labelledby="milestones-heading"><p class="step-label">Milestones from this round</p><h2 id="milestones-heading">Progress worth noticing</h2><ul>${milestones.map((milestone) => `<li><span aria-hidden="true">✦</span><div><strong>${escapeHtml(milestone.title)}</strong><p>${escapeHtml(milestone.detail)}</p></div></li>`).join('')}</ul><p class="field-hint">Milestones describe this completed round; they are not streaks or points.</p></section>`
   }
 
+  private renderSprintNextStep(session: TrainingSession): string {
+    const debrief = createSprintDebrief(session)
+    if (!debrief) return ''
+    const focusCount = debrief.focusItems.length
+    const mission = deriveNextMission(session)
+    const primary = focusCount > 0
+      ? `<button class="button button--primary button--large" type="button" data-action="start-review">Review ${focusCount === 1 ? 'this question' : `these ${focusCount} questions`} <span aria-hidden="true">→</span></button>`
+      : mission?.kind === 'stretch'
+        ? '<button class="button button--primary button--large" type="button" data-action="start-next-mission">Try a one-step stretch <span aria-hidden="true">→</span></button>'
+        : '<button class="button button--primary button--large" type="button" data-action="practice-again">Sprint again <span aria-hidden="true">↻</span></button>'
+    const explanation = focusCount > 0
+      ? `${focusCount} ${pluralize(focusCount, 'question')} may benefit from a short, private review.`
+      : mission?.kind === 'stretch'
+        ? mission.detail
+        : 'Repeat this setup while the rhythm is fresh.'
+    const repeat = focusCount > 0 || mission?.kind === 'stretch' ? '<button class="button button--secondary" type="button" data-action="practice-again">Sprint again</button>' : ''
+    return `<section class="completion-next" aria-labelledby="next-step-heading"><div><p class="step-label">Recommended next</p><h2 id="next-step-heading">${focusCount > 0 ? 'Turn friction into fluency' : mission?.kind === 'stretch' ? 'Build on this run' : 'Keep the rhythm'}</h2><p>${escapeHtml(explanation)}</p></div><div class="completion-next__primary">${primary}</div><div class="completion-next__secondary">${repeat}<button class="button button--quiet" type="button" data-action="change-settings">Change settings</button><button class="button button--quiet" type="button" data-action="view-progress">View progress</button></div></section>`
+  }
+
+  private renderReviewNextStep(session: TrainingSession): string {
+    return `<section class="completion-next" aria-labelledby="next-step-heading"><div><p class="step-label">Recommended next</p><h2 id="next-step-heading">Repeat the exact review</h2><p>One more pass helps make these ${session.problems.length} ${pluralize(session.problems.length, 'question')} feel automatic.</p></div><div class="completion-next__primary"><button class="button button--primary button--large" type="button" data-action="practice-again">Review again <span aria-hidden="true">↻</span></button></div><div class="completion-next__secondary"><button class="button button--secondary" type="button" data-action="change-settings">Start another sprint</button><button class="button button--quiet" type="button" data-action="view-progress">View progress</button></div></section>`
+  }
+
   private renderSprintDebrief(session: TrainingSession): string {
     const debrief = createSprintDebrief(session)
     if (!debrief) return ''
     const hasFocus = debrief.focusItems.length > 0
-    const mission = deriveNextMission(session)
     const focus = debrief.focusItems[0]
     const summary = hasFocus
       ? `${debrief.firstTry} of ${debrief.total} answers were correct on the first try. ${debrief.focusItems.length} ${pluralize(debrief.focusItems.length, 'question')} may be useful to revisit.`
@@ -1185,15 +1232,7 @@ export class MathTrainingApp {
       : debrief.longest
         ? `<div class="debrief-focus"><p class="step-label">Longest solve</p><strong aria-label="${escapeHtml(`${speakExpression(debrief.longest.problem)} equals ${debrief.longest.problem.answer}`)}">${escapeHtml(formatExpression(debrief.longest.problem))} = ${escapeHtml(debrief.longest.problem.answer)}</strong><span>Active time ${formatOptionalDuration(debrief.longest.activeElapsedMs)}</span></div>`
         : ''
-    const primary = hasFocus
-      ? `<button class="button button--primary button--large" type="button" data-action="start-review">Review ${debrief.focusItems.length === 1 ? 'this question' : `these ${debrief.focusItems.length} questions`} <span aria-hidden="true">→</span></button>`
-      : mission?.kind === 'stretch'
-        ? '<button class="button button--primary button--large" type="button" data-action="start-next-mission">Start one-step stretch <span aria-hidden="true">→</span></button>'
-        : '<button class="button button--primary button--large" type="button" data-action="practice-again">Sprint again <span aria-hidden="true">↻</span></button>'
-    const sprintAgain = hasFocus || mission?.kind === 'stretch'
-      ? '<button class="button button--secondary button--large" type="button" data-action="practice-again">Sprint again</button>'
-      : ''
-    return `<section class="sprint-debrief" aria-labelledby="debrief-heading"><div class="debrief-summary"><div><p class="step-label">Your debrief</p><h2 id="debrief-heading">${hasFocus ? `Focus on ${debrief.focusItems.length} ${pluralize(debrief.focusItems.length, 'question')}` : 'Keep the rhythm'}</h2><p>${escapeHtml(summary)}</p>${hasFocus ? '<p class="field-hint">Review is optional, private, and unscored. Sprint again whenever you would rather keep moving.</p>' : mission ? `<p class="field-hint">${escapeHtml(mission.detail)}</p>` : ''}</div>${evidence}</div><div class="debrief-actions">${primary}${sprintAgain}<button class="button button--quiet button--large" type="button" data-action="change-settings">Change settings</button><button class="button button--quiet button--large" type="button" data-action="view-progress">View progress</button></div>${this.renderQuestionBreakdown(debrief.items)}</section>`
+    return `<section class="sprint-debrief" aria-labelledby="debrief-heading"><div class="debrief-summary"><div><p class="step-label">Sprint evidence</p><h2 id="debrief-heading">${hasFocus ? `Focus on ${debrief.focusItems.length} ${pluralize(debrief.focusItems.length, 'question')}` : 'A clean set'}</h2><p>${escapeHtml(summary)}</p></div>${evidence}</div>${this.renderQuestionBreakdown(debrief.items)}</section>`
   }
 
   private renderDebriefFocus(item: DebriefItem): string {

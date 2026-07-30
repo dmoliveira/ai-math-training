@@ -589,9 +589,12 @@ describe('MathTrainingApp lifecycle', () => {
 
     await vi.waitFor(() => expect(resultStore.saveCompleted).toHaveBeenCalledOnce())
     expect(root.textContent).toContain('Review this question')
-    expect(root.textContent).toContain('Your debrief')
+    expect(root.textContent).toContain('Sprint evidence')
     expect(root.textContent).toContain('Sprint again')
     expect(root.textContent).toContain('Change settings')
+    expect(root.querySelectorAll('.completion-next .button--primary')).toHaveLength(1)
+    expect(root.querySelector('.completion-more [data-action="start-review"], .completion-more [data-action="practice-again"], .completion-more [data-action="change-settings"]')).toBeNull()
+    expect(root.querySelector<HTMLDetailsElement>('.completion-more')?.open).toBe(false)
     const rankingCalls = vi.mocked(resultStore.listRanked).mock.calls.length
     const originalExpression = root.querySelector('.debrief-focus strong')?.getAttribute('aria-label')?.split(' equals ')[0]
     root.querySelector<HTMLButtonElement>('[data-action="start-review"]')!.click()
@@ -604,6 +607,8 @@ describe('MathTrainingApp lifecycle', () => {
     expect(root.textContent).not.toContain('20 seconds added to your scored time')
     root.querySelector<HTMLFormElement>('#answer-form')!.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }))
     expect(root.textContent).toContain('Review complete.')
+    expect(root.querySelectorAll('.completion-next .button--primary')).toHaveLength(1)
+    expect(root.querySelector<HTMLDetailsElement>('.completion-more')?.open).toBe(false)
     expect(root.textContent).toContain('Review rounds stay resumable')
     expect(root.querySelector('.ranking-card')).toBeNull()
     expect(root.querySelector('.share-card')).toBeNull()
@@ -883,6 +888,34 @@ describe('MathTrainingApp lifecycle', () => {
     app.destroy()
     expect(document.documentElement.dataset.theme).toBeUndefined()
     expect(document.documentElement.dataset.density).toBeUndefined()
+  })
+
+  it('dismisses Appearance with Escape or an outside pointer without leaking listeners', () => {
+    const root = document.querySelector<HTMLElement>('#app')!
+    const app = new MathTrainingApp(root, { store: createStore({ status: 'ok', state: createPracticeState() }), now: () => 1_000 })
+    app.start()
+    app.start()
+    const menu = root.querySelector<HTMLDetailsElement>('.appearance-menu')!
+    const summary = menu.querySelector<HTMLElement>('summary')!
+    const answer = root.querySelector<HTMLInputElement>('#answer-input')!
+    answer.value = '123'
+    answer.dispatchEvent(new Event('input', { bubbles: true }))
+    menu.open = true
+    answer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(menu.open).toBe(false)
+    expect(document.activeElement).toBe(summary)
+    expect(root.querySelector<HTMLInputElement>('#answer-input')?.value).toBe('123')
+
+    menu.open = true
+    menu.querySelector('button')!.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    expect(menu.open).toBe(true)
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    expect(menu.open).toBe(false)
+
+    app.destroy()
+    menu.open = true
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    expect(menu.open).toBe(true)
   })
 
   it('distinguishes unavailable storage from invalid saved progress', () => {

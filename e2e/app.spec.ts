@@ -82,9 +82,10 @@ test('completes an addition session entirely from the keyboard', async ({ page }
   await expect(page.getByText('100%')).toBeVisible()
   await expect(page.locator('.result-card').filter({ hasText: 'Mistakes' }).locator('dd')).toContainText('0')
   await expect(page.getByRole('button', { name: /Review/ })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Build on this run' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Try a one-step stretch/ })).toBeVisible()
+  await openCompletionMore(page)
   await expect(page.getByText('Clean set', { exact: true })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Keep the rhythm' })).toBeVisible()
-  await expect(page.getByRole('button', { name: /Start one-step stretch/ })).toBeVisible()
   await expect(page.getByText(/own private rankings and history/)).toBeVisible()
 
   await page.getByRole('button', { name: 'Change settings' }).click()
@@ -110,6 +111,7 @@ test('offers accessible one-click challenges without mobile overflow', async ({ 
   await page.setViewportSize({ width: 320, height: 568 })
   const presets = page.locator('[data-action="start-preset"]')
   await expect(presets).toHaveCount(3)
+  expect(await page.locator('#setup-form').evaluate((form, preset) => Boolean(form.compareDocumentPosition(preset as Node) & Node.DOCUMENT_POSITION_FOLLOWING), await presets.first().elementHandle())).toBe(true)
   await openCustomization(page, true)
   await expect(page.getByRole('radio', { name: /Random/ })).toBeChecked()
   await expect(page.locator('.numi--setup')).toBeHidden()
@@ -200,6 +202,7 @@ test('builds mixed questions and supports the on-screen keypad', async ({ page }
 })
 
 test('persists vertical practice and scores a skipped question', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
   await openCustomization(page, true)
   await page.getByLabel('Vertical').check()
   await setQuestionCount(page, 1)
@@ -221,6 +224,12 @@ test('persists vertical practice and scores a skipped question', async ({ page }
   await expect(page.getByRole('heading', { name: 'Session complete.' })).toBeVisible()
   await expect(page.locator('.numi--completion')).toBeVisible()
   await expect(page.locator('.result-card').filter({ hasText: 'Scored time' })).toContainText('00:20')
+  const primaryAction = page.locator('.completion-next__primary .button')
+  const primaryBox = await primaryAction.boundingBox()
+  expect((primaryBox?.y ?? 844) + (primaryBox?.height ?? 1)).toBeLessThanOrEqual(844)
+  expect(primaryBox?.height).toBeGreaterThanOrEqual(44)
+  await expectAccessible(page, 'collapsed mobile completion')
+  await openCompletionMore(page)
   await expect(page.getByText('Skipped · +20s', { exact: true }).first()).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Personal top five' })).toBeVisible()
   await expect(page.getByText('New best')).toBeVisible()
@@ -267,8 +276,9 @@ test('retries the exact difficult set in a resumable unscored mastery review', a
   await page.getByRole('dialog', { name: 'Reveal this answer?' }).getByRole('button', { name: 'Reveal answer' }).click()
   await page.getByRole('button', { name: 'See results' }).click()
 
-  await expect(page.getByRole('heading', { name: 'Focus on 3 questions' })).toBeVisible()
   await expect(page.getByRole('button', { name: /Review these 3 questions/ })).toBeVisible()
+  await openCompletionMore(page)
+  await expect(page.getByRole('heading', { name: 'Focus on 3 questions' })).toBeVisible()
   await page.getByText('Question breakdown (3)').click()
   await expect(page.locator('.question-breakdown li')).toHaveCount(3)
   await expect(page.getByText(/Exact setup/)).toHaveCount(0)
@@ -339,9 +349,11 @@ test('has no detectable WCAG A or AA violations in core views', async ({ page })
     .getByRole('button', { name: 'Reveal answer' })
     .click()
   await page.getByRole('button', { name: 'See results' }).click()
-  await expect(page.getByRole('heading', { name: 'Focus on 1 question' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Review this question' })).toBeVisible()
   await expectAccessible(page, 'completion')
+  await openCompletionMore(page)
+  await expect(page.getByRole('heading', { name: 'Focus on 1 question' })).toBeVisible()
+  await expectAccessible(page, 'expanded completion')
 })
 
 test('starts and resumes unscored focus practice from exact private history', async ({ page }) => {
@@ -349,7 +361,7 @@ test('starts and resumes unscored focus practice from exact private history', as
   await page.getByRole('button', { name: /Start sprint/ }).click()
   await page.getByRole('button', { name: 'Skip question (+20s)' }).click()
   await page.getByRole('button', { name: 'See results' }).click()
-  await expect(page.getByRole('heading', { name: 'Focus on 1 question' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Review this question' })).toBeVisible()
   await page.getByRole('button', { name: 'View progress' }).click()
   const pastPractice = page.getByRole('button', { name: 'Practice past focus questions' })
   await expect(pastPractice).toBeVisible()
@@ -431,6 +443,7 @@ test('reviews corrected questions without expanding a perfect result', async ({ 
   await input.press('Enter')
   await page.getByRole('button', { name: 'See results' }).click()
 
+  await openCompletionMore(page)
   const debrief = page.getByRole('region', { name: 'Focus on 1 question' })
   await expect(debrief).toBeVisible()
   await expect(debrief).toContainText('Correct after 1 retry')
@@ -447,6 +460,13 @@ test('persists themes and compact mode with accessible icon navigation', async (
   await page.setViewportSize({ width: 320, height: 568 })
   const bio = page.getByRole('link', { name: /^Bio/ })
   await expect(bio).toBeVisible()
+  await page.getByLabel('Appearance settings').click()
+  await page.keyboard.press('Escape')
+  await expect(page.getByLabel('Appearance settings')).toBeFocused()
+  await expect(page.locator('.appearance-menu')).not.toHaveAttribute('open', '')
+  await page.getByLabel('Appearance settings').click()
+  await page.getByRole('heading', { name: 'Start a sprint in seconds.' }).click()
+  await expect(page.locator('.appearance-menu')).not.toHaveAttribute('open', '')
   await page.getByLabel('Appearance settings').click()
   await page.getByRole('button', { name: /Midnight theme/ }).click()
   await expect(page.getByLabel('Appearance settings')).toBeFocused()
@@ -573,6 +593,12 @@ async function openCustomization(page: Page, advanced = false): Promise<void> {
     const more = page.locator('#advanced-setup')
     if (!(await more.evaluate((element) => (element as HTMLDetailsElement).open))) await more.locator(':scope > summary').click()
   }
+}
+
+async function openCompletionMore(page: Page): Promise<void> {
+  const details = page.locator('.completion-more')
+  if (!(await details.evaluate((element) => (element as HTMLDetailsElement).open))) await details.locator(':scope > summary').click()
+  await expect(details).toHaveJSProperty('open', true)
 }
 
 async function expectAccessible(page: Page, view: string): Promise<void> {
